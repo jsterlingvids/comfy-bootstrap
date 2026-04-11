@@ -1,2 +1,12 @@
-# One repo URL per line.
-# Lines starting with # and empty lines are ignored.
+# ComfyUI custom node manifest
+# One git repo URL per line.
+# Empty lines and lines starting with # are ignored.
+#
+# Add only the custom nodes you actually use.
+# Example:
+# https://github.com/ltdrdata/ComfyUI-Manager.git
+# https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git
+# https://github.com/Fannovel16/comfyui_controlnet_aux.git
+#
+# Starter example:
+# https://github.com/ltdrdata/ComfyUI-Manager.git
