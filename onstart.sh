@@ -7,6 +7,7 @@ readonly MANIFEST_REMOTE="myb2:comfy-bootstrap/custom_nodes_manifest.txt"
 readonly REMOTE_WORKFLOWS="myb2:comfy-bootstrap/workflows"
 readonly AUTOSAVE_LOG="${WORKSPACE_ROOT}/autosave.log"
 readonly AUTOSAVE_PIDFILE="${WORKSPACE_ROOT}/comfy-bootstrap-autosave.pid"
+readonly COMFY_LOG="${WORKSPACE_ROOT}/comfyui.log"
 
 COMFY_ROOT=""
 BOOTSTRAP_ROOT=""
@@ -232,6 +233,42 @@ start_autosave_loop() {
   log "Autosave loop running with PID ${autosave_pid}."
 }
 
+ensure_comfy_running() {
+  local comfy_args_raw="${COMFYUI_ARGS:---listen 0.0.0.0 --port 8188}"
+  local -a comfy_args=()
+  local has_listen=0
+
+  read -r -a comfy_args <<< "${comfy_args_raw}"
+
+  for arg in "${comfy_args[@]}"; do
+    if [[ "${arg}" == "--listen" || "${arg}" == "--host" ]]; then
+      has_listen=1
+      break
+    fi
+  done
+
+  if (( has_listen == 0 )); then
+    comfy_args=(--listen 0.0.0.0 "${comfy_args[@]}")
+  fi
+
+  if pgrep -f "${COMFY_ROOT}/main.py" >/dev/null 2>&1; then
+    log "ComfyUI process already running."
+    return
+  fi
+
+  if pgrep -fa "python.*main.py" | grep -q "ComfyUI" 2>/dev/null; then
+    log "Detected an existing ComfyUI-like process; not starting a duplicate."
+    return
+  fi
+
+  log "Starting ComfyUI with args: ${comfy_args[*]}"
+  (
+    cd "${COMFY_ROOT}"
+    nohup python3 main.py "${comfy_args[@]}" >>"${COMFY_LOG}" 2>&1 &
+  )
+  log "ComfyUI launch requested; logging to ${COMFY_LOG}."
+}
+
 main() {
   log "Bootstrap starting."
   wait_for_workspace
@@ -244,6 +281,7 @@ main() {
   fetch_manifest
   sync_custom_nodes
   install_node_requirements
+  ensure_comfy_running
   start_autosave_loop
   log "Bootstrap complete."
 }
