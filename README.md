@@ -38,11 +38,11 @@ bash onstart.sh
 
 ```text
 comfy-bootstrap/
-├── onstart.sh
-├── save_snapshot.sh
-├── custom_nodes_manifest.txt
-├── generate_manifest.sh
-└── README.md
+|- onstart.sh
+|- save_snapshot.sh
+|- custom_nodes_manifest.txt
+|- generate_manifest.sh
+`- README.md
 ```
 
 ## First-time bootstrap flow
