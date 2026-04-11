@@ -258,7 +258,7 @@ start_autosave_loop() {
     export COMFY_ROOT WORKSPACE_ROOT
     while true; do
       bash "${BOOTSTRAP_ROOT}/save_snapshot.sh" >>"${AUTOSAVE_LOG}" 2>&1 || true
-      sleep 900
+      sleep 300
     done
   ) &
   local autosave_pid=$!

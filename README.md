@@ -11,7 +11,7 @@ It will auto-detect the ComfyUI install path on startup. If your image uses a cu
 - Clones missing custom node repos and fast-forwards existing ones
 - Installs every `requirements.txt` found under `/workspace/ComfyUI/custom_nodes`
 - Installs the OpenAI Codex CLI so `codex` is available in the shell
-- Starts a background autosave loop that runs every 15 minutes and logs to `/workspace/autosave.log`
+- Starts a background autosave loop that runs every 5 minutes and logs to `/workspace/autosave.log`
 - Provides a manual snapshot script you can run at any time
 
 ## Required environment variables
