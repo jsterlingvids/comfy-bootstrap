@@ -27,10 +27,15 @@ Put this in Vast's **On-start Script** field:
 ```bash
 #!/usr/bin/env bash
 set -e
+mkdir -p /workspace
 apt-get update && apt-get install -y git
 cd /workspace
-git clone https://github.com/jsterlingvids/comfy-bootstrap.git || true
-cd comfy-bootstrap
+if [ ! -d comfy-bootstrap/.git ]; then
+  git clone https://github.com/jsterlingvids/comfy-bootstrap.git
+else
+  git -C comfy-bootstrap pull --ff-only
+fi
+cd /workspace/comfy-bootstrap
 bash onstart.sh
 ```
 

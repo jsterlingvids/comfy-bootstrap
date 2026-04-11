@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly BOOTSTRAP_ROOT="/workspace/comfy-bootstrap"
-readonly COMFY_ROOT="/workspace/ComfyUI"
+readonly WORKSPACE_ROOT="${WORKSPACE_ROOT:-/workspace}"
+readonly BOOTSTRAP_ROOT="${WORKSPACE_ROOT}/comfy-bootstrap"
+readonly COMFY_ROOT="${WORKSPACE_ROOT}/ComfyUI"
 readonly CUSTOM_NODES_DIR="${COMFY_ROOT}/custom_nodes"
 readonly WORKFLOWS_DIR="${COMFY_ROOT}/user/default/workflows"
 readonly MANIFEST_LOCAL="${BOOTSTRAP_ROOT}/custom_nodes_manifest.txt"
 readonly MANIFEST_REMOTE="myb2:comfy-bootstrap/custom_nodes_manifest.txt"
 readonly REMOTE_WORKFLOWS="myb2:comfy-bootstrap/workflows"
-readonly AUTOSAVE_LOG="/workspace/autosave.log"
-readonly AUTOSAVE_PIDFILE="/workspace/comfy-bootstrap-autosave.pid"
+readonly AUTOSAVE_LOG="${WORKSPACE_ROOT}/autosave.log"
+readonly AUTOSAVE_PIDFILE="${WORKSPACE_ROOT}/comfy-bootstrap-autosave.pid"
 
 log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
@@ -40,6 +41,26 @@ install_packages_if_missing() {
   apt-get install -y "${missing[@]}"
 }
 
+wait_for_workspace() {
+  local attempts=30
+
+  mkdir -p "${WORKSPACE_ROOT}"
+
+  while (( attempts > 0 )); do
+    if [[ -d "${WORKSPACE_ROOT}" ]]; then
+      log "Workspace root ready at ${WORKSPACE_ROOT}."
+      return
+    fi
+
+    log "Waiting for workspace root ${WORKSPACE_ROOT} to become available."
+    sleep 2
+    attempts=$((attempts - 1))
+  done
+
+  log "Workspace root ${WORKSPACE_ROOT} did not become available in time."
+  exit 1
+}
+
 configure_rclone() {
   require_env "B2_ACCOUNT_ID"
   require_env "B2_APP_KEY"
@@ -52,8 +73,16 @@ configure_rclone() {
 }
 
 ensure_directories() {
+  mkdir -p "${BOOTSTRAP_ROOT}"
   mkdir -p "${CUSTOM_NODES_DIR}" "${WORKFLOWS_DIR}"
   log "Ensured ComfyUI directories exist."
+}
+
+verify_comfy_install() {
+  if [[ ! -d "${COMFY_ROOT}" ]]; then
+    log "Expected ComfyUI at ${COMFY_ROOT}, but it was not found."
+    exit 1
+  fi
 }
 
 restore_workflows() {
@@ -158,7 +187,9 @@ start_autosave_loop() {
 
 main() {
   log "Bootstrap starting."
+  wait_for_workspace
   install_packages_if_missing
+  verify_comfy_install
   configure_rclone
   ensure_directories
   restore_workflows

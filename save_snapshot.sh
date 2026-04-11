@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly COMFY_ROOT="/workspace/ComfyUI"
+readonly WORKSPACE_ROOT="${WORKSPACE_ROOT:-/workspace}"
+readonly COMFY_ROOT="${WORKSPACE_ROOT}/ComfyUI"
 readonly WORKFLOWS_DIR="${COMFY_ROOT}/user/default/workflows"
 readonly CUSTOM_NODES_DIR="${COMFY_ROOT}/custom_nodes"
 readonly REMOTE_ROOT="myb2:comfy-bootstrap"
