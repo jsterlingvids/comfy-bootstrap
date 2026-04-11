@@ -6,6 +6,8 @@ readonly DEFAULT_COMFY_ROOT="${COMFY_ROOT:-}"
 readonly MANIFEST_REMOTE="myb2:comfy-bootstrap/custom_nodes_manifest.txt"
 readonly REMOTE_WORKFLOWS="myb2:comfy-bootstrap/workflows"
 readonly REMOTE_CODEX_HOME="myb2:comfy-bootstrap/codex-home"
+readonly REMOTE_SETTINGS_ROOT="myb2:comfy-bootstrap/settings"
+readonly REMOTE_CUSTOM_NODES="myb2:comfy-bootstrap/custom_nodes"
 readonly AUTOSAVE_LOG="${WORKSPACE_ROOT}/autosave.log"
 readonly AUTOSAVE_PIDFILE="${WORKSPACE_ROOT}/comfy-bootstrap-autosave.pid"
 readonly COMFY_LOG="${WORKSPACE_ROOT}/comfyui.log"
@@ -278,6 +280,41 @@ restore_workflows() {
   fi
 }
 
+restore_settings() {
+  local restored_count=0
+  local -a restore_pairs=(
+    "${REMOTE_SETTINGS_ROOT}/extra_model_paths.yaml|${COMFY_ROOT}/extra_model_paths.yaml"
+    "${REMOTE_SETTINGS_ROOT}/comfy.settings.json|${COMFY_ROOT}/user/default/comfy.settings.json"
+    "${REMOTE_SETTINGS_ROOT}/ComfyUI-Manager-config.ini|${COMFY_ROOT}/user/default/ComfyUI-Manager/config.ini"
+    "${REMOTE_SETTINGS_ROOT}/manager-config.ini|${COMFY_ROOT}/user/__manager/config.ini"
+  )
+  local restore_pair=""
+  local remote_path=""
+  local local_path=""
+
+  log "Restoring ComfyUI settings from Backblaze B2."
+  for restore_pair in "${restore_pairs[@]}"; do
+    remote_path="${restore_pair%%|*}"
+    local_path="${restore_pair#*|}"
+    mkdir -p "$(dirname "${local_path}")"
+
+    if rclone copyto "${remote_path}" "${local_path}"; then
+      restored_count=$((restored_count + 1))
+    fi
+  done
+
+  log "Settings restore complete; restored ${restored_count}/${#restore_pairs[@]} file(s)."
+}
+
+restore_custom_nodes_snapshot() {
+  log "Restoring custom node snapshot from Backblaze B2."
+  if rclone sync "${REMOTE_CUSTOM_NODES}" "${CUSTOM_NODES_DIR}" --create-empty-src-dirs; then
+    log "Custom node snapshot restore complete."
+  else
+    log "Custom node snapshot restore skipped or failed; continuing with manifest sync."
+  fi
+}
+
 count_manifest_repos() {
   local manifest_file="$1"
   awk '
@@ -298,15 +335,14 @@ fetch_manifest() {
   local tmp_remote=""
   local normalized_local=""
   local normalized_remote=""
-  local merged_tmp=""
   local local_count=0
   local remote_count=0
-  local merged_count=0
+  local active_count=0
+  local source_label="repo baseline"
 
   tmp_remote="$(mktemp)"
   normalized_local="$(mktemp)"
   normalized_remote="$(mktemp)"
-  merged_tmp="$(mktemp)"
 
   normalize_manifest_file "${MANIFEST_LOCAL}" "${normalized_local}" "repo baseline"
   local_count="$(wc -l < "${normalized_local}")"
@@ -316,25 +352,30 @@ fetch_manifest() {
     normalize_manifest_file "${tmp_remote}" "${normalized_remote}" "B2 catch-all"
     remote_count="$(wc -l < "${normalized_remote}")"
     install -m 0644 "${normalized_remote}" "${MANIFEST_REMOTE_CACHE}"
-    if ! cmp -s "${normalized_local}" "${normalized_remote}" 2>/dev/null; then
-      log "Repo baseline and B2 catch-all manifests differ; using the union of both."
+    if (( remote_count > 0 )); then
+      install -m 0644 "${normalized_remote}" "${MANIFEST_ACTIVE}"
+      source_label="B2 catch-all"
+      if ! cmp -s "${normalized_local}" "${normalized_remote}" 2>/dev/null; then
+        log "Repo baseline and B2 catch-all manifests differ; using B2 as the source of truth."
+      fi
+    else
+      install -m 0644 "${normalized_local}" "${MANIFEST_ACTIVE}"
+      log "B2 manifest is empty; falling back to repo baseline."
     fi
   else
-    : > "${normalized_remote}"
     remote_count=0
+    install -m 0644 "${normalized_local}" "${MANIFEST_ACTIVE}"
     log "B2 manifest unavailable; continuing with repo baseline only."
   fi
 
-  cat "${normalized_local}" "${normalized_remote}" | sed '/^$/d' | sort -u > "${merged_tmp}"
-  install -m 0644 "${merged_tmp}" "${MANIFEST_ACTIVE}"
-  merged_count="$(wc -l < "${MANIFEST_ACTIVE}")"
+  active_count="$(wc -l < "${MANIFEST_ACTIVE}")"
 
-  log "Manifest repo counts: baseline=${local_count} b2=${remote_count} merged=${merged_count}"
-  if (( merged_count == 0 )); then
-    log "WARNING: merged custom node manifest contains zero repos; custom node sync will be skipped."
+  log "Manifest repo counts: baseline=${local_count} b2=${remote_count} active=${active_count} source=${source_label}"
+  if (( active_count == 0 )); then
+    log "WARNING: active custom node manifest contains zero repos; custom node sync will be skipped."
   fi
 
-  rm -f "${tmp_remote}" "${normalized_local}" "${normalized_remote}" "${merged_tmp}"
+  rm -f "${tmp_remote}" "${normalized_local}" "${normalized_remote}"
 }
 
 normalize_manifest_file() {
@@ -394,8 +435,13 @@ sync_custom_nodes() {
         failed_count=$((failed_count + 1))
       fi
     elif [[ -d "${repo_dir}" ]]; then
-      log "Directory exists without git metadata, skipping clone: ${repo_dir}"
-      failed_count=$((failed_count + 1))
+      log "Directory exists without git metadata; replacing it from manifest source: ${repo_dir}"
+      rm -rf "${repo_dir}"
+      if sync_custom_node_repo "${repo_url}" "${repo_dir}" "clone"; then
+        synced_count=$((synced_count + 1))
+      else
+        failed_count=$((failed_count + 1))
+      fi
     else
       if sync_custom_node_repo "${repo_url}" "${repo_dir}" "clone"; then
         synced_count=$((synced_count + 1))
@@ -411,6 +457,78 @@ sync_custom_nodes() {
   elif (( failed_count > 0 )); then
     log "WARNING: custom node sync incomplete; ${failed_count} repo(s) failed."
   fi
+}
+
+audit_custom_nodes_inventory() {
+  local audit_report="${STATE_DIR}/custom_nodes_audit.txt"
+  local expected_names_file=""
+  local local_entries_file=""
+  local managed_missing=0
+  local managed_ok=0
+  local local_git_unmanaged=0
+  local local_plain_unmanaged=0
+  local repo_url=""
+  local repo_name=""
+  local entry_path=""
+  local entry_name=""
+
+  expected_names_file="$(mktemp)"
+  local_entries_file="$(mktemp)"
+
+  : > "${audit_report}"
+  log "Auditing custom node inventory."
+
+  if [[ -f "${MANIFEST_ACTIVE}" ]]; then
+    while IFS= read -r repo_url || [[ -n "${repo_url}" ]]; do
+      [[ -z "${repo_url}" ]] && continue
+      repo_name="$(basename "${repo_url}")"
+      repo_name="${repo_name%.git}"
+      printf '%s\n' "${repo_name}" >> "${expected_names_file}"
+
+      if [[ -d "${CUSTOM_NODES_DIR}/${repo_name}" ]]; then
+        managed_ok=$((managed_ok + 1))
+      else
+        managed_missing=$((managed_missing + 1))
+        printf 'MANAGED_MISSING %s %s\n' "${repo_name}" "${repo_url}" >> "${audit_report}"
+      fi
+    done < "${MANIFEST_ACTIVE}"
+  fi
+
+  if [[ -d "${CUSTOM_NODES_DIR}" ]]; then
+    find "${CUSTOM_NODES_DIR}" -mindepth 1 -maxdepth 1 \
+      ! -name '__pycache__' \
+      ! -name 'node_modules' \
+      -printf '%P\n' | LC_ALL=C sort > "${local_entries_file}"
+
+    while IFS= read -r entry_name || [[ -n "${entry_name}" ]]; do
+      [[ -z "${entry_name}" ]] && continue
+      entry_path="${CUSTOM_NODES_DIR}/${entry_name}"
+
+      if grep -Fxq "${entry_name}" "${expected_names_file}" 2>/dev/null; then
+        continue
+      fi
+
+      if [[ -d "${entry_path}/.git" ]]; then
+        local_git_unmanaged=$((local_git_unmanaged + 1))
+        printf 'UNMANAGED_GIT_REPO %s\n' "${entry_name}" >> "${audit_report}"
+      else
+        local_plain_unmanaged=$((local_plain_unmanaged + 1))
+        printf 'UNMANAGED_PLAIN_ENTRY %s\n' "${entry_name}" >> "${audit_report}"
+      fi
+    done < "${local_entries_file}"
+  fi
+
+  {
+    printf 'SUMMARY managed_ok=%s managed_missing=%s unmanaged_git=%s unmanaged_plain=%s\n' \
+      "${managed_ok}" "${managed_missing}" "${local_git_unmanaged}" "${local_plain_unmanaged}"
+    cat "${audit_report}"
+  } > "${audit_report}.tmp"
+  mv "${audit_report}.tmp" "${audit_report}"
+
+  log "Custom node audit summary: managed_ok=${managed_ok} managed_missing=${managed_missing} unmanaged_git=${local_git_unmanaged} unmanaged_plain=${local_plain_unmanaged}"
+  log "Custom node audit report written to ${audit_report}."
+
+  rm -f "${expected_names_file}" "${local_entries_file}"
 }
 
 sync_custom_node_repo() {
@@ -872,8 +990,11 @@ main() {
   install_codex_cli
   ensure_directories
   restore_workflows
+  restore_settings
+  restore_custom_nodes_snapshot
   fetch_manifest
   sync_custom_nodes
+  audit_custom_nodes_inventory
   install_comfy_requirements
   install_node_requirements
   run_custom_node_install_scripts

@@ -299,6 +299,7 @@ sync_codex_stable_files() {
 sync_b2_manifest_from_live_nodes() {
   local generated_manifest=""
   local repo_count=0
+  local workspace_root_for_manifest="${WORKSPACE_ROOT}"
 
   if [[ ! -x "${BOOTSTRAP_ROOT}/generate_manifest.sh" && ! -f "${BOOTSTRAP_ROOT}/generate_manifest.sh" ]]; then
     log "Skipping B2 manifest regeneration: ${BOOTSTRAP_ROOT}/generate_manifest.sh not found."
@@ -307,7 +308,8 @@ sync_b2_manifest_from_live_nodes() {
 
   generated_manifest="$(mktemp)"
   log "Regenerating live custom node manifest for B2 catch-all."
-  WORKSPACE_ROOT="${WORKSPACE_ROOT}" COMFY_ROOT="${COMFY_ROOT}" bash "${BOOTSTRAP_ROOT}/generate_manifest.sh" "${generated_manifest}"
+  env WORKSPACE_ROOT="${workspace_root_for_manifest}" COMFY_ROOT="${COMFY_ROOT}" \
+    bash "${BOOTSTRAP_ROOT}/generate_manifest.sh" "${generated_manifest}"
   normalize_manifest_file "${generated_manifest}"
   repo_count="$(grep -cve '^[[:space:]]*$' "${generated_manifest}" || true)"
   log "Uploading regenerated B2 manifest with ${repo_count} repo(s)."
