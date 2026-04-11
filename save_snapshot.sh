@@ -114,6 +114,7 @@ main() {
   sync_if_present "${COMFY_ROOT}/extra_model_paths.yaml" "${REMOTE_ROOT}/settings/extra_model_paths.yaml"
   sync_if_present "${COMFY_ROOT}/user/default/comfy.settings.json" "${REMOTE_ROOT}/settings/comfy.settings.json"
   sync_if_present "${COMFY_ROOT}/user/default/ComfyUI-Manager/config.ini" "${REMOTE_ROOT}/settings/ComfyUI-Manager-config.ini"
+  sync_if_present "${COMFY_ROOT}/user/__manager/config.ini" "${REMOTE_ROOT}/settings/manager-config.ini"
 
   sync_directory_if_present "${CUSTOM_NODES_DIR}" "${REMOTE_ROOT}/custom_nodes" \
     --create-empty-src-dirs \

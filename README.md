@@ -79,6 +79,7 @@ The snapshot script is safe to run repeatedly. It syncs:
 
 - Workflows
 - A small set of ComfyUI settings files when present
+- ComfyUI-Manager config from either `user/default/ComfyUI-Manager/config.ini` or `user/__manager/config.ini`
 - `custom_nodes`, excluding `.git`, `__pycache__`, `*.pyc`, and `node_modules`
 - Codex local state from `/workspace/.codex` so login and config persist across instances
 
