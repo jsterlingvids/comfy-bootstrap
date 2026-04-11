@@ -137,6 +137,9 @@ count_manifest_repos() {
   awk '
     {
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+      if ($0 == "" || $0 ~ /^#/) {
+        next
+      }
       if ($0 != "") {
         count++
       }
@@ -147,39 +150,76 @@ count_manifest_repos() {
   ' "${manifest_file}"
 }
 
+normalize_manifest_file() {
+  local source_manifest="$1"
+  local normalized_manifest
+  normalized_manifest="$(mktemp)"
+
+  awk '
+    {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+      if ($0 == "" || $0 ~ /^#/) {
+        next
+      }
+      print $0
+    }
+  ' "${source_manifest}" | LC_ALL=C sort -u > "${normalized_manifest}"
+
+  install -m 0644 "${normalized_manifest}" "${source_manifest}"
+  rm -f "${normalized_manifest}"
+}
+
+log_manifest_vs_live_drift() {
+  local live_manifest_file
+  local missing_on_disk=0
+  local untracked_on_disk=0
+
+  if [[ ! -f "${BOOTSTRAP_ROOT}/generate_manifest.sh" ]]; then
+    log "Live manifest generator not found; skipping manifest-vs-live drift check."
+    return
+  fi
+
+  live_manifest_file="$(mktemp)"
+  bash "${BOOTSTRAP_ROOT}/generate_manifest.sh" "${live_manifest_file}" >/dev/null
+
+  if ! cmp -s "${MANIFEST_LOCAL}" "${live_manifest_file}"; then
+    missing_on_disk="$(comm -23 "${MANIFEST_LOCAL}" "${live_manifest_file}" | wc -l | tr -d '[:space:]')"
+    untracked_on_disk="$(comm -13 "${MANIFEST_LOCAL}" "${live_manifest_file}" | wc -l | tr -d '[:space:]')"
+    log "Manifest (canonical source) differs from live installed custom nodes: ${missing_on_disk} manifest repo(s) not installed, ${untracked_on_disk} live repo(s) not in manifest."
+  else
+    log "Manifest matches live installed custom nodes."
+  fi
+
+  rm -f "${live_manifest_file}"
+}
+
 refresh_and_sync_manifest() {
-  local generated_manifest
   local old_count=0
   local new_count=0
 
-  if [[ ! -f "${BOOTSTRAP_ROOT}/generate_manifest.sh" ]]; then
-    log "Manifest generator missing: ${BOOTSTRAP_ROOT}/generate_manifest.sh"
-    exit 1
-  fi
-
-  generated_manifest="$(mktemp)"
-
-  if [[ -f "${MANIFEST_LOCAL}" ]]; then
-    old_count="$(count_manifest_repos "${MANIFEST_LOCAL}")"
-  fi
-
-  bash "${BOOTSTRAP_ROOT}/generate_manifest.sh" "${generated_manifest}"
-  new_count="$(count_manifest_repos "${generated_manifest}")"
-  log "Manifest source-of-truth repo count from live custom_nodes: ${new_count}"
-
   mkdir -p "$(dirname "${MANIFEST_LOCAL}")"
-  if [[ ! -f "${MANIFEST_LOCAL}" ]] || ! cmp -s "${generated_manifest}" "${MANIFEST_LOCAL}"; then
-    install -m 0644 "${generated_manifest}" "${MANIFEST_LOCAL}"
-    log "Manifest regenerated from live custom_nodes (${old_count} -> ${new_count} repos)."
-  else
-    log "Manifest already matches live custom_nodes (${new_count} repos)."
+  if [[ ! -f "${MANIFEST_LOCAL}" ]]; then
+    : > "${MANIFEST_LOCAL}"
+    log "Manifest file was missing; created empty canonical manifest at ${MANIFEST_LOCAL}."
   fi
+
+  old_count="$(count_manifest_repos "${MANIFEST_LOCAL}")"
+  normalize_manifest_file "${MANIFEST_LOCAL}"
+  new_count="$(count_manifest_repos "${MANIFEST_LOCAL}")"
+
+  log "Canonical manifest repo count: ${new_count}"
+  if [[ "${old_count}" != "${new_count}" ]]; then
+    log "Manifest normalized (${old_count} -> ${new_count} repos)."
+  fi
+  if [[ "${new_count}" == "0" ]]; then
+    log "WARNING: Canonical manifest has zero repos; next boot custom-node sync from manifest will be skipped."
+  fi
+
+  log_manifest_vs_live_drift
 
   sync_if_present "${MANIFEST_LOCAL}" "${MANIFEST_REMOTE}"
   verify_file_if_present "${MANIFEST_LOCAL}" "${MANIFEST_REMOTE}"
-  log "Manifest uploaded to ${MANIFEST_REMOTE}."
-
-  rm -f "${generated_manifest}"
+  log "Canonical manifest uploaded to ${MANIFEST_REMOTE}."
 }
 
 count_local_files() {

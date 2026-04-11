@@ -1,2 +1,6 @@
 https://github.com/Comfy-Org/ComfyUI-Manager
 https://github.com/SethRobinson/comfyui-workflow-to-api-converter-endpoint
+https://github.com/crystian/comfyui-crystools
+https://github.com/kijai/ComfyUI-KJNodes
+https://github.com/kijai/ComfyUI-WanAnimatePreprocess
+https://github.com/kijai/ComfyUI-WanVideoWrapper
