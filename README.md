@@ -10,6 +10,7 @@ It will auto-detect the ComfyUI install path on startup. If your image uses a cu
 - Restores the custom node manifest from B2 when available, otherwise uses the repo-local fallback
 - Clones missing custom node repos and fast-forwards existing ones
 - Installs every `requirements.txt` found under `/workspace/ComfyUI/custom_nodes`
+- Installs the OpenAI Codex CLI so `codex` is available in the shell
 - Starts a background autosave loop that runs every 15 minutes and logs to `/workspace/autosave.log`
 - Provides a manual snapshot script you can run at any time
 
@@ -20,8 +21,11 @@ Set these on the Vast.ai instance before `onstart.sh` runs:
 - `B2_ACCOUNT_ID`
 - `B2_APP_KEY`
 - `COMFY_ROOT` (optional override if ComfyUI is not in a standard location)
+- `OPENAI_API_KEY` (optional, if you want Codex CLI ready for API-key auth)
 
 The scripts use those values to configure the `myb2` rclone remote at runtime.
+
+If you want `codex` to work immediately in the shell, either export `OPENAI_API_KEY` on the instance or complete the Codex CLI login flow once after boot.
 
 ## Vast.ai on-start setup
 

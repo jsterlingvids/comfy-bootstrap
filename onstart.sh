@@ -44,6 +44,23 @@ install_packages_if_missing() {
   apt-get install -y "${missing[@]}"
 }
 
+install_codex_cli() {
+  if command -v codex >/dev/null 2>&1; then
+    log "Codex CLI already installed."
+    return
+  fi
+
+  if ! command -v npm >/dev/null 2>&1; then
+    log "Installing Node.js and npm for Codex CLI."
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y nodejs npm
+  fi
+
+  log "Installing Codex CLI."
+  npm install -g @openai/codex
+}
+
 wait_for_workspace() {
   local attempts=30
 
@@ -289,6 +306,7 @@ main() {
   log "Bootstrap starting."
   wait_for_workspace
   install_packages_if_missing
+  install_codex_cli
   discover_comfy_root
   initialize_paths
   configure_rclone
