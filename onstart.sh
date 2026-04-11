@@ -32,6 +32,17 @@ log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
 }
 
+pip_install_with_fallback() {
+  local -a pip_args=("$@")
+
+  if python3 -m pip "${pip_args[@]}"; then
+    return 0
+  fi
+
+  log "pip install failed; retrying with --break-system-packages."
+  python3 -m pip "${pip_args[@]}" --break-system-packages
+}
+
 require_env() {
   local name="$1"
   if [[ -z "${!name:-}" ]]; then
@@ -96,6 +107,22 @@ compute_node_requirements_fingerprint() {
     printf '%s\n' "${requirements_file}"
     sha256sum "${requirements_file}"
   done < <(find "${CUSTOM_NODES_DIR}" -type f -name requirements.txt | sort)
+
+  python3 --version 2>&1 || true
+}
+
+compute_node_install_scripts_fingerprint() {
+  local install_script=""
+
+  if [[ ! -d "${CUSTOM_NODES_DIR}" ]]; then
+    printf 'missing\n'
+    return
+  fi
+
+  while IFS= read -r install_script; do
+    printf '%s\n' "${install_script}"
+    sha256sum "${install_script}"
+  done < <(find "${CUSTOM_NODES_DIR}" -maxdepth 2 -type f \( -name install.py -o -name install.sh \) | sort)
 
   python3 --version 2>&1 || true
 }
@@ -440,6 +467,8 @@ install_node_requirements() {
   local current_fingerprint=""
   local current_stamp=""
   local stamp_file="${STATE_DIR}/custom-node-requirements.sha256"
+  local success_count=0
+  local failed_count=0
 
   if ! command -v python3 >/dev/null 2>&1; then
     log "python3 is missing; cannot install node requirements."
@@ -464,10 +493,77 @@ install_node_requirements() {
   local requirements_file=""
   for requirements_file in "${requirements_files[@]}"; do
     log "Installing Python requirements from ${requirements_file}"
-    python3 -m pip install --no-cache-dir -r "${requirements_file}"
+    if pip_install_with_fallback install --no-cache-dir -r "${requirements_file}"; then
+      success_count=$((success_count + 1))
+    else
+      failed_count=$((failed_count + 1))
+      log "WARNING: failed installing requirements from ${requirements_file}"
+    fi
   done
 
-  write_stamp "${stamp_file}" "${current_fingerprint}"
+  log "Custom node requirements install summary: total=${#requirements_files[@]} succeeded=${success_count} failed=${failed_count}"
+  if (( failed_count == 0 )); then
+    write_stamp "${stamp_file}" "${current_fingerprint}"
+  else
+    log "Requirements install had failures; preserving previous stamp to retry next launch."
+  fi
+}
+
+run_custom_node_install_scripts() {
+  local -a install_scripts=()
+  local current_fingerprint=""
+  local current_stamp=""
+  local stamp_file="${STATE_DIR}/custom-node-install-scripts.sha256"
+  local install_script=""
+  local success_count=0
+  local failed_count=0
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    log "python3 is missing; cannot run custom node install scripts."
+    exit 1
+  fi
+
+  mapfile -t install_scripts < <(find "${CUSTOM_NODES_DIR}" -maxdepth 2 -type f \( -name install.py -o -name install.sh \) | sort)
+
+  if (( ${#install_scripts[@]} == 0 )); then
+    write_stamp "${stamp_file}" "none"
+    log "No custom node install scripts found."
+    return
+  fi
+
+  current_fingerprint="$(compute_node_install_scripts_fingerprint | sha256sum | awk '{print $1}')"
+  current_stamp="$(read_stamp "${stamp_file}")"
+  if [[ "${current_fingerprint}" == "${current_stamp}" ]]; then
+    log "Custom node install scripts unchanged; skipping re-run."
+    return
+  fi
+
+  for install_script in "${install_scripts[@]}"; do
+    if [[ "${install_script}" == *.py ]]; then
+      log "Running custom node install script: ${install_script}"
+      if (cd "$(dirname "${install_script}")" && python3 "${install_script}"); then
+        success_count=$((success_count + 1))
+      else
+        failed_count=$((failed_count + 1))
+        log "WARNING: install script failed: ${install_script}"
+      fi
+    else
+      log "Running custom node install script: ${install_script}"
+      if (cd "$(dirname "${install_script}")" && bash "${install_script}"); then
+        success_count=$((success_count + 1))
+      else
+        failed_count=$((failed_count + 1))
+        log "WARNING: install script failed: ${install_script}"
+      fi
+    fi
+  done
+
+  log "Custom node install script summary: total=${#install_scripts[@]} succeeded=${success_count} failed=${failed_count}"
+  if (( failed_count == 0 )); then
+    write_stamp "${stamp_file}" "${current_fingerprint}"
+  else
+    log "Install script run had failures; preserving previous stamp to retry next launch."
+  fi
 }
 
 install_comfy_requirements() {
@@ -490,7 +586,10 @@ install_comfy_requirements() {
     fi
 
     log "Installing ComfyUI core requirements from ${comfy_requirements}"
-    python3 -m pip install --no-cache-dir -r "${comfy_requirements}"
+    if ! pip_install_with_fallback install --no-cache-dir -r "${comfy_requirements}"; then
+      log "Failed installing ComfyUI core requirements."
+      exit 1
+    fi
     write_stamp "${stamp_file}" "${current_fingerprint}"
   else
     log "ComfyUI requirements.txt not found at ${comfy_requirements}; skipping core dependency install."
@@ -686,6 +785,81 @@ ensure_comfy_running() {
   exit 1
 }
 
+validate_workflow_nodes_available() {
+  local comfy_args_raw="${COMFYUI_ARGS:---listen 0.0.0.0 --port ${DEFAULT_COMFY_PORT}}"
+  local -a comfy_args=()
+  local configured_port=""
+
+  read -r -a comfy_args <<< "${comfy_args_raw}"
+  configured_port="$(get_comfy_port_from_args "${DEFAULT_COMFY_PORT}" "${comfy_args[@]}")"
+
+  log "Validating workflow node classes against live ComfyUI object_info."
+  python3 - "${WORKFLOWS_DIR}" "${configured_port}" <<'PY'
+import glob
+import json
+import re
+import sys
+import urllib.request
+
+workflows_dir = sys.argv[1]
+port = sys.argv[2]
+frontend_known = {
+    "Fast Bypasser (rgthree)",
+    "GetNode",
+    "MarkdownNote",
+    "Mute / Bypass Repeater (rgthree)",
+    "Note",
+    "Reroute",
+    "SetNode",
+}
+
+def iter_types(obj):
+    if isinstance(obj, dict):
+        node_type = obj.get("class_type") or obj.get("type")
+        if isinstance(node_type, str):
+            yield node_type
+        for value in obj.values():
+            yield from iter_types(value)
+    elif isinstance(obj, list):
+        for item in obj:
+            yield from iter_types(item)
+
+used = set()
+for workflow_file in glob.glob(f"{workflows_dir}/*.json"):
+    try:
+        with open(workflow_file, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception:
+        continue
+    used.update(iter_types(payload))
+
+try:
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}/object_info", timeout=10) as response:
+        object_info = json.load(response)
+except Exception as exc:
+    print(f"VALIDATION_ERROR unable to fetch object_info: {exc}")
+    sys.exit(0)
+
+available = set(object_info.keys())
+missing = sorted(node for node in used if node not in available)
+uuid_like = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+frontend_missing = []
+runtime_missing = []
+for node in missing:
+    if node in frontend_known or uuid_like.match(node):
+        frontend_missing.append(node)
+    else:
+        runtime_missing.append(node)
+
+print(f"VALIDATION_SUMMARY workflows={len(glob.glob(f'{workflows_dir}/*.json'))} used={len(used)} available={len(available)} runtime_missing={len(runtime_missing)} frontend_missing={len(frontend_missing)}")
+for node in runtime_missing:
+    print(f"VALIDATION_RUNTIME_MISSING {node}")
+for node in frontend_missing:
+    print(f"VALIDATION_FRONTEND_MISSING {node}")
+PY
+}
+
 main() {
   log "Bootstrap starting."
   wait_for_workspace
@@ -702,7 +876,9 @@ main() {
   sync_custom_nodes
   install_comfy_requirements
   install_node_requirements
+  run_custom_node_install_scripts
   ensure_comfy_running
+  validate_workflow_nodes_available
   start_autosave_loop
   log "Bootstrap complete."
 }
