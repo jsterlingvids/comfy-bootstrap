@@ -4,6 +4,7 @@ set -euo pipefail
 readonly WORKSPACE_ROOT="${WORKSPACE_ROOT:-/workspace}"
 readonly DEFAULT_COMFY_ROOT="${COMFY_ROOT:-}"
 readonly REMOTE_ROOT="myb2:comfy-bootstrap"
+readonly CODEX_HOME_DIR="${WORKSPACE_ROOT}/.codex"
 
 COMFY_ROOT=""
 WORKFLOWS_DIR=""
@@ -123,6 +124,12 @@ main() {
     --exclude "*.pyc" \
     --exclude "node_modules/**" \
     --exclude "**/node_modules/**"
+
+  sync_directory_if_present "${CODEX_HOME_DIR}" "${REMOTE_ROOT}/codex-home" \
+    --create-empty-src-dirs \
+    --exclude "history/**" \
+    --exclude "logs/**" \
+    --exclude "*.log"
 
   log "Snapshot complete."
 }

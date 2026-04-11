@@ -11,6 +11,7 @@ It will auto-detect the ComfyUI install path on startup. If your image uses a cu
 - Clones missing custom node repos and fast-forwards existing ones
 - Installs every `requirements.txt` found under `/workspace/ComfyUI/custom_nodes`
 - Installs the OpenAI Codex CLI so `codex` is available in the shell
+- Restores and snapshots Codex local state so ChatGPT login can persist across fresh instances
 - Starts a background autosave loop that runs every 5 minutes and logs to `/workspace/autosave.log`
 - Provides a manual snapshot script you can run at any time
 
@@ -26,6 +27,7 @@ Set these on the Vast.ai instance before `onstart.sh` runs:
 The scripts use those values to configure the `myb2` rclone remote at runtime.
 
 If you want `codex` to work immediately in the shell, either export `OPENAI_API_KEY` on the instance or complete the Codex CLI login flow once after boot.
+After that first login, the bootstrap preserves `/root/.codex` by storing it in `/workspace/.codex` and syncing it to B2.
 
 ## Vast.ai on-start setup
 
@@ -78,6 +80,7 @@ The snapshot script is safe to run repeatedly. It syncs:
 - Workflows
 - A small set of ComfyUI settings files when present
 - `custom_nodes`, excluding `.git`, `__pycache__`, `*.pyc`, and `node_modules`
+- Codex local state from `/workspace/.codex` so login and config persist across instances
 
 ## Updating workflows and nodes
 
@@ -106,3 +109,4 @@ rclone copyto /workspace/comfy-bootstrap/custom_nodes_manifest.txt myb2:comfy-bo
 - `onstart.sh` is idempotent and safe to run more than once.
 - The autosave loop avoids launching duplicate background workers by tracking its PID.
 - If the remote manifest is missing, the local `custom_nodes_manifest.txt` remains the fallback.
+- By default, Codex CLI is configured with `approval_policy = "never"` and `sandbox_mode = "danger-full-access"` in `/workspace/.codex/config.toml`. This is convenient on an isolated Vast instance, but it is intentionally permissive.

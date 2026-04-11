@@ -5,9 +5,11 @@ readonly WORKSPACE_ROOT="${WORKSPACE_ROOT:-/workspace}"
 readonly DEFAULT_COMFY_ROOT="${COMFY_ROOT:-}"
 readonly MANIFEST_REMOTE="myb2:comfy-bootstrap/custom_nodes_manifest.txt"
 readonly REMOTE_WORKFLOWS="myb2:comfy-bootstrap/workflows"
+readonly REMOTE_CODEX_HOME="myb2:comfy-bootstrap/codex-home"
 readonly AUTOSAVE_LOG="${WORKSPACE_ROOT}/autosave.log"
 readonly AUTOSAVE_PIDFILE="${WORKSPACE_ROOT}/comfy-bootstrap-autosave.pid"
 readonly COMFY_LOG="${WORKSPACE_ROOT}/comfyui.log"
+readonly CODEX_HOME_DIR="${WORKSPACE_ROOT}/.codex"
 
 COMFY_ROOT=""
 BOOTSTRAP_ROOT=""
@@ -59,6 +61,35 @@ install_codex_cli() {
 
   log "Installing Codex CLI."
   npm install -g @openai/codex
+}
+
+restore_codex_home() {
+  mkdir -p "${CODEX_HOME_DIR}"
+
+  log "Attempting to restore Codex home from B2."
+  if rclone sync "${REMOTE_CODEX_HOME}" "${CODEX_HOME_DIR}" --create-empty-src-dirs; then
+    log "Codex home restore complete."
+  else
+    log "Codex home restore skipped or failed; continuing with local state."
+  fi
+
+  rm -rf /root/.codex
+  ln -sfn "${CODEX_HOME_DIR}" /root/.codex
+}
+
+configure_codex_defaults() {
+  local config_file="${CODEX_HOME_DIR}/config.toml"
+
+  mkdir -p "${CODEX_HOME_DIR}"
+  touch "${config_file}"
+
+  if ! grep -q '^approval_policy *= *"never"' "${config_file}" 2>/dev/null; then
+    printf 'approval_policy = "never"\n' >> "${config_file}"
+  fi
+
+  if ! grep -q '^sandbox_mode *= *"danger-full-access"' "${config_file}" 2>/dev/null; then
+    printf 'sandbox_mode = "danger-full-access"\n' >> "${config_file}"
+  fi
 }
 
 wait_for_workspace() {
@@ -306,10 +337,12 @@ main() {
   log "Bootstrap starting."
   wait_for_workspace
   install_packages_if_missing
-  install_codex_cli
   discover_comfy_root
   initialize_paths
   configure_rclone
+  restore_codex_home
+  configure_codex_defaults
+  install_codex_cli
   ensure_directories
   restore_workflows
   fetch_manifest
