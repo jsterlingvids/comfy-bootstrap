@@ -265,7 +265,7 @@ initialize_paths() {
 ensure_directories() {
   mkdir -p "${BOOTSTRAP_ROOT}"
   mkdir -p "${STATE_DIR}"
-  mkdir -p "${CUSTOM_NODES_DIR}" "${WORKFLOWS_DIR}"
+  mkdir -p "${CUSTOM_NODES_DIR}" "${WORKFLOWS_DIR}" "${COMFY_ROOT}/web/extensions"
   log "Ensured ComfyUI directories exist."
 }
 
@@ -762,11 +762,11 @@ ensure_comfy_running() {
   fi
 
   log "Starting ComfyUI with args: ${comfy_args[*]}"
-  launch_pid="$(
+  launch_pid="$({
     cd "${COMFY_ROOT}"
     nohup python3 main.py "${comfy_args[@]}" >>"${COMFY_LOG}" 2>&1 &
     echo $!
-  )"
+  })"
   log "ComfyUI launch requested with PID ${launch_pid}; logging to ${COMFY_LOG}."
 
   listener_pid="$(wait_for_comfy_listener "${configured_port}" 60 || true)"
