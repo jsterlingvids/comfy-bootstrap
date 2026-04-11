@@ -2,15 +2,17 @@
 set -euo pipefail
 
 readonly WORKSPACE_ROOT="${WORKSPACE_ROOT:-/workspace}"
-readonly BOOTSTRAP_ROOT="${WORKSPACE_ROOT}/comfy-bootstrap"
-readonly COMFY_ROOT="${WORKSPACE_ROOT}/ComfyUI"
-readonly CUSTOM_NODES_DIR="${COMFY_ROOT}/custom_nodes"
-readonly WORKFLOWS_DIR="${COMFY_ROOT}/user/default/workflows"
-readonly MANIFEST_LOCAL="${BOOTSTRAP_ROOT}/custom_nodes_manifest.txt"
+readonly DEFAULT_COMFY_ROOT="${COMFY_ROOT:-}"
 readonly MANIFEST_REMOTE="myb2:comfy-bootstrap/custom_nodes_manifest.txt"
 readonly REMOTE_WORKFLOWS="myb2:comfy-bootstrap/workflows"
 readonly AUTOSAVE_LOG="${WORKSPACE_ROOT}/autosave.log"
 readonly AUTOSAVE_PIDFILE="${WORKSPACE_ROOT}/comfy-bootstrap-autosave.pid"
+
+COMFY_ROOT=""
+BOOTSTRAP_ROOT=""
+CUSTOM_NODES_DIR=""
+WORKFLOWS_DIR=""
+MANIFEST_LOCAL=""
 
 log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
@@ -72,17 +74,61 @@ configure_rclone() {
   log "Configured rclone remote 'myb2' from environment variables."
 }
 
+is_comfy_root() {
+  local candidate="$1"
+  [[ -d "${candidate}" ]] || return 1
+  [[ -f "${candidate}/main.py" || -d "${candidate}/custom_nodes" ]] || return 1
+}
+
+discover_comfy_root() {
+  local candidates=()
+  local candidate
+
+  if [[ -n "${DEFAULT_COMFY_ROOT}" ]]; then
+    candidates+=("${DEFAULT_COMFY_ROOT}")
+  fi
+
+  candidates+=(
+    "${WORKSPACE_ROOT}/ComfyUI"
+    "${WORKSPACE_ROOT}/comfy/ComfyUI"
+    "/opt/ComfyUI"
+    "/opt/comfyui"
+    "/app/ComfyUI"
+    "/ComfyUI"
+    "/root/ComfyUI"
+  )
+
+  for candidate in "${candidates[@]}"; do
+    if is_comfy_root "${candidate}"; then
+      COMFY_ROOT="${candidate}"
+      log "Detected ComfyUI at ${COMFY_ROOT}."
+      return
+    fi
+  done
+
+  candidate="$(find "${WORKSPACE_ROOT}" /opt /app /root -maxdepth 3 -type f -name main.py -path '*/ComfyUI/*' 2>/dev/null | head -n 1 || true)"
+  if [[ -n "${candidate}" ]]; then
+    COMFY_ROOT="$(dirname "${candidate}")"
+    log "Detected ComfyUI at ${COMFY_ROOT}."
+    return
+  fi
+
+  log "Unable to locate ComfyUI automatically."
+  log "Set COMFY_ROOT explicitly if the image uses a non-standard path."
+  exit 1
+}
+
+initialize_paths() {
+  BOOTSTRAP_ROOT="${WORKSPACE_ROOT}/comfy-bootstrap"
+  CUSTOM_NODES_DIR="${COMFY_ROOT}/custom_nodes"
+  WORKFLOWS_DIR="${COMFY_ROOT}/user/default/workflows"
+  MANIFEST_LOCAL="${BOOTSTRAP_ROOT}/custom_nodes_manifest.txt"
+}
+
 ensure_directories() {
   mkdir -p "${BOOTSTRAP_ROOT}"
   mkdir -p "${CUSTOM_NODES_DIR}" "${WORKFLOWS_DIR}"
   log "Ensured ComfyUI directories exist."
-}
-
-verify_comfy_install() {
-  if [[ ! -d "${COMFY_ROOT}" ]]; then
-    log "Expected ComfyUI at ${COMFY_ROOT}, but it was not found."
-    exit 1
-  fi
 }
 
 restore_workflows() {
@@ -176,7 +222,7 @@ start_autosave_loop() {
   log "Starting autosave loop."
   (
     while true; do
-      bash "${BOOTSTRAP_ROOT}/save_snapshot.sh" >>"${AUTOSAVE_LOG}" 2>&1 || true
+      COMFY_ROOT="${COMFY_ROOT}" WORKSPACE_ROOT="${WORKSPACE_ROOT}" bash "${BOOTSTRAP_ROOT}/save_snapshot.sh" >>"${AUTOSAVE_LOG}" 2>&1 || true
       sleep 900
     done
   ) &
@@ -189,7 +235,8 @@ main() {
   log "Bootstrap starting."
   wait_for_workspace
   install_packages_if_missing
-  verify_comfy_install
+  discover_comfy_root
+  initialize_paths
   configure_rclone
   ensure_directories
   restore_workflows

@@ -2,9 +2,11 @@
 
 This repo bootstraps a fresh Vast.ai instance running the `vastai/comfy` image without reinstalling ComfyUI. It restores workflows from Backblaze B2, recreates `custom_nodes` from a manifest, installs each node's Python dependencies, and keeps the instance synced back to B2 with periodic snapshots.
 
+It will auto-detect the ComfyUI install path on startup. If your image uses a custom location, you can also set `COMFY_ROOT` explicitly in Vast.
+
 ## What it does
 
-- Restores workflows from `myb2:comfy-bootstrap/workflows` into `/workspace/ComfyUI/user/default/workflows`
+- Restores workflows into the detected ComfyUI `user/default/workflows` directory
 - Restores the custom node manifest from B2 when available, otherwise uses the repo-local fallback
 - Clones missing custom node repos and fast-forwards existing ones
 - Installs every `requirements.txt` found under `/workspace/ComfyUI/custom_nodes`
@@ -17,6 +19,7 @@ Set these on the Vast.ai instance before `onstart.sh` runs:
 
 - `B2_ACCOUNT_ID`
 - `B2_APP_KEY`
+- `COMFY_ROOT` (optional override if ComfyUI is not in a standard location)
 
 The scripts use those values to configure the `myb2` rclone remote at runtime.
 

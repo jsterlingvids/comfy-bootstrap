@@ -2,10 +2,12 @@
 set -euo pipefail
 
 readonly WORKSPACE_ROOT="${WORKSPACE_ROOT:-/workspace}"
-readonly COMFY_ROOT="${WORKSPACE_ROOT}/ComfyUI"
-readonly WORKFLOWS_DIR="${COMFY_ROOT}/user/default/workflows"
-readonly CUSTOM_NODES_DIR="${COMFY_ROOT}/custom_nodes"
+readonly DEFAULT_COMFY_ROOT="${COMFY_ROOT:-}"
 readonly REMOTE_ROOT="myb2:comfy-bootstrap"
+
+COMFY_ROOT=""
+WORKFLOWS_DIR=""
+CUSTOM_NODES_DIR=""
 
 log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
@@ -26,6 +28,52 @@ configure_rclone() {
   export RCLONE_CONFIG_MYB2_TYPE="b2"
   export RCLONE_CONFIG_MYB2_ACCOUNT="${B2_ACCOUNT_ID}"
   export RCLONE_CONFIG_MYB2_KEY="${B2_APP_KEY}"
+}
+
+is_comfy_root() {
+  local candidate="$1"
+  [[ -d "${candidate}" ]] || return 1
+  [[ -f "${candidate}/main.py" || -d "${candidate}/custom_nodes" ]] || return 1
+}
+
+discover_comfy_root() {
+  local candidates=()
+  local candidate
+
+  if [[ -n "${DEFAULT_COMFY_ROOT}" ]]; then
+    candidates+=("${DEFAULT_COMFY_ROOT}")
+  fi
+
+  candidates+=(
+    "${WORKSPACE_ROOT}/ComfyUI"
+    "${WORKSPACE_ROOT}/comfy/ComfyUI"
+    "/opt/ComfyUI"
+    "/opt/comfyui"
+    "/app/ComfyUI"
+    "/ComfyUI"
+    "/root/ComfyUI"
+  )
+
+  for candidate in "${candidates[@]}"; do
+    if is_comfy_root "${candidate}"; then
+      COMFY_ROOT="${candidate}"
+      return
+    fi
+  done
+
+  candidate="$(find "${WORKSPACE_ROOT}" /opt /app /root -maxdepth 3 -type f -name main.py -path '*/ComfyUI/*' 2>/dev/null | head -n 1 || true)"
+  if [[ -n "${candidate}" ]]; then
+    COMFY_ROOT="$(dirname "${candidate}")"
+    return
+  fi
+
+  log "Unable to locate ComfyUI automatically for snapshot."
+  exit 1
+}
+
+initialize_paths() {
+  WORKFLOWS_DIR="${COMFY_ROOT}/user/default/workflows"
+  CUSTOM_NODES_DIR="${COMFY_ROOT}/custom_nodes"
 }
 
 sync_if_present() {
@@ -56,6 +104,9 @@ sync_directory_if_present() {
 main() {
   log "Snapshot starting."
   configure_rclone
+  discover_comfy_root
+  initialize_paths
+  log "Using ComfyUI at ${COMFY_ROOT}."
 
   sync_directory_if_present "${WORKFLOWS_DIR}" "${REMOTE_ROOT}/workflows" --create-empty-src-dirs
 
