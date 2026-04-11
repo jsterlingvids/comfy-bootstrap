@@ -7,8 +7,11 @@ It will auto-detect the ComfyUI install path on startup. If your image uses a cu
 ## What it does
 
 - Restores workflows into the detected ComfyUI `user/default/workflows` directory
-- Merges the repo-local custom node baseline manifest with the B2 catch-all manifest
-- Clones missing custom node repos and fast-forwards existing ones from the merged manifest set
+- Restores saved ComfyUI settings files from B2 when present
+- Restores the last B2 `custom_nodes/` snapshot before reconciling manifest-managed repos
+- Uses the B2 custom node manifest as the source of truth on boot, with the repo manifest only as fallback
+- Clones missing custom node repos and fast-forwards existing ones from the active manifest set
+- Writes a boot-time custom node audit report to `/workspace/.comfy-bootstrap-state/custom_nodes_audit.txt`
 - Installs ComfyUI and custom-node Python requirements only when the corresponding `requirements.txt` content changes
 - Installs the OpenAI Codex CLI so `codex` is available in the shell
 - Restores and snapshots only stable Codex auth/config files so ChatGPT login can persist without boot-time cache restores
@@ -116,5 +119,5 @@ rclone copyto /workspace/comfy-bootstrap/custom_nodes_manifest.txt myb2:comfy-bo
 - `onstart.sh` is idempotent and safe to run more than once.
 - `onstart.sh` detects ComfyUI by the configured port and will not try to start a second instance when one is already serving.
 - The autosave loop avoids launching duplicate background workers by tracking its PID.
-- The repo-local `custom_nodes_manifest.txt` is the curated baseline; the B2 manifest is the live catch-all set. Boot installs the union of both.
+- The B2 `custom_nodes_manifest.txt` is the source of truth during boot. The repo-local `custom_nodes_manifest.txt` is only a fallback if B2 is unavailable or empty.
 - By default, Codex CLI is configured with `approval_policy = "never"` and `sandbox_mode = "danger-full-access"` in `/workspace/.codex/config.toml`. This is convenient on an isolated Vast instance, but it is intentionally permissive.
