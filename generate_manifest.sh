@@ -59,12 +59,20 @@ discover_comfy_root() {
 }
 
 main() {
+  local tmp_output=""
+  local sorted_output=""
+
   discover_comfy_root
 
   mkdir -p "$(dirname "${OUTPUT_FILE}")"
-  : > "${OUTPUT_FILE}"
+  tmp_output="$(mktemp)"
+  sorted_output="$(mktemp)"
+  : > "${tmp_output}"
 
   if [[ ! -d "${CUSTOM_NODES_DIR}" ]]; then
+    install -m 0644 "${tmp_output}" "${OUTPUT_FILE}"
+    rm -f "${tmp_output}"
+    rm -f "${sorted_output}"
     log "Custom nodes directory not found at ${CUSTOM_NODES_DIR}; wrote empty manifest to ${OUTPUT_FILE}."
     exit 0
   fi
@@ -75,10 +83,14 @@ main() {
     remote_url="$(git -C "${repo_dir}" remote get-url origin 2>/dev/null || true)"
 
     if [[ -n "${remote_url}" ]]; then
-      printf '%s\n' "${remote_url}" >> "${OUTPUT_FILE}"
+      printf '%s\n' "${remote_url}" >> "${tmp_output}"
     fi
   done < <(find "${CUSTOM_NODES_DIR}" -mindepth 1 -maxdepth 2 -type d -name .git | sort)
 
+  sort -u "${tmp_output}" > "${sorted_output}"
+  install -m 0644 "${sorted_output}" "${OUTPUT_FILE}"
+  rm -f "${tmp_output}"
+  rm -f "${sorted_output}"
   log "Wrote manifest to ${OUTPUT_FILE}."
 }
 

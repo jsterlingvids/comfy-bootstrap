@@ -9,9 +9,9 @@ It will auto-detect the ComfyUI install path on startup. If your image uses a cu
 - Restores workflows into the detected ComfyUI `user/default/workflows` directory
 - Restores the custom node manifest from B2 when available, otherwise uses the repo-local fallback
 - Clones missing custom node repos and fast-forwards existing ones
-- Installs every `requirements.txt` found under `/workspace/ComfyUI/custom_nodes`
+- Installs ComfyUI and custom-node Python requirements only when the corresponding `requirements.txt` content changes
 - Installs the OpenAI Codex CLI so `codex` is available in the shell
-- Restores and snapshots Codex local state so ChatGPT login can persist across fresh instances
+- Restores and snapshots only stable Codex auth/config files so ChatGPT login can persist without boot-time cache restores
 - Starts a background autosave loop that runs every 5 minutes and logs to `/workspace/autosave.log`
 - Provides a manual snapshot script you can run at any time
 
@@ -27,7 +27,12 @@ Set these on the Vast.ai instance before `onstart.sh` runs:
 The scripts use those values to configure the `myb2` rclone remote at runtime.
 
 If you want `codex` to work immediately in the shell, either export `OPENAI_API_KEY` on the instance or complete the Codex CLI login flow once after boot.
-After that first login, the bootstrap preserves `/root/.codex` by storing it in `/workspace/.codex` and syncing it to B2.
+After that first login, the bootstrap preserves `/root/.codex` by storing it in `/workspace/.codex` and syncing only these stable files to B2:
+
+- `auth.json`
+- `config.toml`
+- `installation_id`
+- `version.json`
 
 ## Vast.ai on-start setup
 
@@ -81,7 +86,7 @@ The snapshot script is safe to run repeatedly. It syncs:
 - A small set of ComfyUI settings files when present
 - ComfyUI-Manager config from either `user/default/ComfyUI-Manager/config.ini` or `user/__manager/config.ini`
 - `custom_nodes`, excluding `.git`, `__pycache__`, `*.pyc`, and `node_modules`
-- Codex local state from `/workspace/.codex` so login and config persist across instances
+- Stable Codex files from `/workspace/.codex`: `auth.json`, `config.toml`, `installation_id`, and `version.json`
 
 ## Updating workflows and nodes
 
@@ -108,6 +113,7 @@ rclone copyto /workspace/comfy-bootstrap/custom_nodes_manifest.txt myb2:comfy-bo
 ## Notes
 
 - `onstart.sh` is idempotent and safe to run more than once.
+- `onstart.sh` detects ComfyUI by the configured port and will not try to start a second instance when one is already serving.
 - The autosave loop avoids launching duplicate background workers by tracking its PID.
 - If the remote manifest is missing, the local `custom_nodes_manifest.txt` remains the fallback.
 - By default, Codex CLI is configured with `approval_policy = "never"` and `sandbox_mode = "danger-full-access"` in `/workspace/.codex/config.toml`. This is convenient on an isolated Vast instance, but it is intentionally permissive.

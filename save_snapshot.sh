@@ -7,6 +7,12 @@ readonly REMOTE_ROOT="myb2:comfy-bootstrap"
 readonly CODEX_HOME_DIR="${WORKSPACE_ROOT}/.codex"
 readonly RCLONE_RETRIES="${RCLONE_RETRIES:-3}"
 readonly RCLONE_LOW_LEVEL_RETRIES="${RCLONE_LOW_LEVEL_RETRIES:-10}"
+readonly CODEX_STABLE_FILES=(
+  "auth.json"
+  "config.toml"
+  "installation_id"
+  "version.json"
+)
 
 COMFY_ROOT=""
 WORKFLOWS_DIR=""
@@ -21,19 +27,6 @@ readonly CUSTOM_NODES_RCLONE_ARGS=(
   --exclude "*.pyc"
   --exclude "node_modules/**"
   --exclude "**/node_modules/**"
-)
-
-readonly CODEX_HOME_RCLONE_ARGS=(
-  --create-empty-src-dirs
-  --exclude "history/**"
-  --exclude "logs/**"
-  --exclude "*.log"
-  --exclude "sessions/**"
-  --exclude "models_cache.json"
-  --exclude "state_*.sqlite"
-  --exclude "state_*.sqlite-*"
-  --exclude "logs_*.sqlite"
-  --exclude "logs_*.sqlite-*"
 )
 
 log() {
@@ -83,6 +76,7 @@ discover_comfy_root() {
     "${WORKSPACE_ROOT}/comfy/ComfyUI"
     "/opt/ComfyUI"
     "/opt/comfyui"
+    "/opt/workspace-internal/ComfyUI"
     "/app/ComfyUI"
     "/ComfyUI"
     "/root/ComfyUI"
@@ -144,11 +138,6 @@ count_local_files() {
         \( -path '*/.git' -o -path '*/.git/*' -o -path '*/__pycache__' -o -path '*/__pycache__/*' -o -path '*/node_modules' -o -path '*/node_modules/*' \) -prune -o \
         -type f ! -name '*.pyc' -print | wc -l
       ;;
-    "${CODEX_HOME_DIR}")
-      find "${source_dir}" \
-        \( -path '*/history' -o -path '*/history/*' -o -path '*/logs' -o -path '*/logs/*' -o -path '*/sessions' -o -path '*/sessions/*' \) -prune -o \
-        -type f ! -name '*.log' ! -name 'models_cache.json' ! -name 'state_*.sqlite' ! -name 'state_*.sqlite-*' ! -name 'logs_*.sqlite' ! -name 'logs_*.sqlite-*' -print | wc -l
-      ;;
     *)
       find "${source_dir}" -type f -print | wc -l
       ;;
@@ -163,11 +152,6 @@ count_local_bytes() {
       find "${source_dir}" \
         \( -path '*/.git' -o -path '*/.git/*' -o -path '*/__pycache__' -o -path '*/__pycache__/*' -o -path '*/node_modules' -o -path '*/node_modules/*' \) -prune -o \
         -type f ! -name '*.pyc' -printf '%s\n' | awk '{sum+=$1} END {print sum+0}'
-      ;;
-    "${CODEX_HOME_DIR}")
-      find "${source_dir}" \
-        \( -path '*/history' -o -path '*/history/*' -o -path '*/logs' -o -path '*/logs/*' -o -path '*/sessions' -o -path '*/sessions/*' \) -prune -o \
-        -type f ! -name '*.log' ! -name 'models_cache.json' ! -name 'state_*.sqlite' ! -name 'state_*.sqlite-*' ! -name 'logs_*.sqlite' ! -name 'logs_*.sqlite-*' -printf '%s\n' | awk '{sum+=$1} END {print sum+0}'
       ;;
     *)
       find "${source_dir}" -type f -printf '%s\n' | awk '{sum+=$1} END {print sum+0}'
@@ -257,6 +241,16 @@ verify_directory_if_present() {
   log "Verified ${source_dir}: ${local_files} files, ${local_bytes} bytes"
 }
 
+sync_codex_stable_files() {
+  local codex_file=""
+
+  mkdir -p "${CODEX_HOME_DIR}"
+
+  for codex_file in "${CODEX_STABLE_FILES[@]}"; do
+    sync_if_present "${CODEX_HOME_DIR}/${codex_file}" "${REMOTE_ROOT}/codex-home/${codex_file}"
+    verify_file_if_present "${CODEX_HOME_DIR}/${codex_file}" "${REMOTE_ROOT}/codex-home/${codex_file}"
+  done
+}
 main() {
   log "Snapshot starting."
   configure_rclone
@@ -279,8 +273,7 @@ main() {
   sync_directory_if_present "${CUSTOM_NODES_DIR}" "${REMOTE_ROOT}/custom_nodes" "${CUSTOM_NODES_RCLONE_ARGS[@]}"
   verify_directory_if_present "${CUSTOM_NODES_DIR}" "${REMOTE_ROOT}/custom_nodes" "${CUSTOM_NODES_RCLONE_ARGS[@]}"
 
-  sync_directory_if_present "${CODEX_HOME_DIR}" "${REMOTE_ROOT}/codex-home" "${CODEX_HOME_RCLONE_ARGS[@]}"
-  verify_directory_if_present "${CODEX_HOME_DIR}" "${REMOTE_ROOT}/codex-home" "${CODEX_HOME_RCLONE_ARGS[@]}"
+  sync_codex_stable_files
 
   log "Snapshot complete."
 }
