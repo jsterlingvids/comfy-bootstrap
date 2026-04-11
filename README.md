@@ -7,8 +7,8 @@ It will auto-detect the ComfyUI install path on startup. If your image uses a cu
 ## What it does
 
 - Restores workflows into the detected ComfyUI `user/default/workflows` directory
-- Restores the custom node manifest from B2 when available, otherwise uses the repo-local fallback
-- Clones missing custom node repos and fast-forwards existing ones
+- Merges the repo-local custom node baseline manifest with the B2 catch-all manifest
+- Clones missing custom node repos and fast-forwards existing ones from the merged manifest set
 - Installs ComfyUI and custom-node Python requirements only when the corresponding `requirements.txt` content changes
 - Installs the OpenAI Codex CLI so `codex` is available in the shell
 - Restores and snapshots only stable Codex auth/config files so ChatGPT login can persist without boot-time cache restores
@@ -66,7 +66,7 @@ comfy-bootstrap/
 
 ## First-time bootstrap flow
 
-1. Add your custom node Git repos to `custom_nodes_manifest.txt`, one URL per line.
+1. Add your must-have custom node Git repos to `custom_nodes_manifest.txt`, one URL per line.
 2. Upload your saved workflows to `myb2:comfy-bootstrap/workflows`, or let the repo start with an empty workflow directory.
 3. Launch the Vast.ai instance with `B2_ACCOUNT_ID` and `B2_APP_KEY` set.
 4. Let `onstart.sh` restore workflows, sync nodes, install requirements, and start autosave.
@@ -86,6 +86,7 @@ The snapshot script is safe to run repeatedly. It syncs:
 - A small set of ComfyUI settings files when present
 - ComfyUI-Manager config from either `user/default/ComfyUI-Manager/config.ini` or `user/__manager/config.ini`
 - `custom_nodes`, excluding `.git`, `__pycache__`, `*.pyc`, and `node_modules`
+- A regenerated live custom node manifest to B2 so the catch-all node list stays current
 - Stable Codex files from `/workspace/.codex`: `auth.json`, `config.toml`, `installation_id`, and `version.json`
 
 ## Updating workflows and nodes
@@ -104,7 +105,7 @@ cd /workspace/comfy-bootstrap
 bash generate_manifest.sh
 ```
 
-If you want the updated manifest to become the source of truth for future instances, upload it to B2:
+If you want to refresh the B2 catch-all manifest manually, upload a generated manifest to B2:
 
 ```bash
 rclone copyto /workspace/comfy-bootstrap/custom_nodes_manifest.txt myb2:comfy-bootstrap/custom_nodes_manifest.txt
@@ -115,5 +116,5 @@ rclone copyto /workspace/comfy-bootstrap/custom_nodes_manifest.txt myb2:comfy-bo
 - `onstart.sh` is idempotent and safe to run more than once.
 - `onstart.sh` detects ComfyUI by the configured port and will not try to start a second instance when one is already serving.
 - The autosave loop avoids launching duplicate background workers by tracking its PID.
-- If the remote manifest is missing, the local `custom_nodes_manifest.txt` remains the fallback.
+- The repo-local `custom_nodes_manifest.txt` is the curated baseline; the B2 manifest is the live catch-all set. Boot installs the union of both.
 - By default, Codex CLI is configured with `approval_policy = "never"` and `sandbox_mode = "danger-full-access"` in `/workspace/.codex/config.toml`. This is convenient on an isolated Vast instance, but it is intentionally permissive.

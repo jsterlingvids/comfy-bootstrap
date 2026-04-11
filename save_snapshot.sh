@@ -152,74 +152,25 @@ count_manifest_repos() {
 
 normalize_manifest_file() {
   local source_manifest="$1"
-  local normalized_manifest
+  local normalized_manifest=""
   normalized_manifest="$(mktemp)"
 
-  awk '
-    {
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
-      if ($0 == "" || $0 ~ /^#/) {
-        next
+  if [[ ! -f "${source_manifest}" ]]; then
+    : > "${normalized_manifest}"
+  else
+    awk '
+      {
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+        if ($0 == "" || $0 ~ /^#/) {
+          next
+        }
+        print $0
       }
-      print $0
-    }
-  ' "${source_manifest}" | LC_ALL=C sort -u > "${normalized_manifest}"
+    ' "${source_manifest}" | LC_ALL=C sort -u > "${normalized_manifest}"
+  fi
 
   install -m 0644 "${normalized_manifest}" "${source_manifest}"
   rm -f "${normalized_manifest}"
-}
-
-log_manifest_vs_live_drift() {
-  local live_manifest_file
-  local missing_on_disk=0
-  local untracked_on_disk=0
-
-  if [[ ! -f "${BOOTSTRAP_ROOT}/generate_manifest.sh" ]]; then
-    log "Live manifest generator not found; skipping manifest-vs-live drift check."
-    return
-  fi
-
-  live_manifest_file="$(mktemp)"
-  bash "${BOOTSTRAP_ROOT}/generate_manifest.sh" "${live_manifest_file}" >/dev/null
-
-  if ! cmp -s "${MANIFEST_LOCAL}" "${live_manifest_file}"; then
-    missing_on_disk="$(comm -23 "${MANIFEST_LOCAL}" "${live_manifest_file}" | wc -l | tr -d '[:space:]')"
-    untracked_on_disk="$(comm -13 "${MANIFEST_LOCAL}" "${live_manifest_file}" | wc -l | tr -d '[:space:]')"
-    log "Manifest (canonical source) differs from live installed custom nodes: ${missing_on_disk} manifest repo(s) not installed, ${untracked_on_disk} live repo(s) not in manifest."
-  else
-    log "Manifest matches live installed custom nodes."
-  fi
-
-  rm -f "${live_manifest_file}"
-}
-
-refresh_and_sync_manifest() {
-  local old_count=0
-  local new_count=0
-
-  mkdir -p "$(dirname "${MANIFEST_LOCAL}")"
-  if [[ ! -f "${MANIFEST_LOCAL}" ]]; then
-    : > "${MANIFEST_LOCAL}"
-    log "Manifest file was missing; created empty canonical manifest at ${MANIFEST_LOCAL}."
-  fi
-
-  old_count="$(count_manifest_repos "${MANIFEST_LOCAL}")"
-  normalize_manifest_file "${MANIFEST_LOCAL}"
-  new_count="$(count_manifest_repos "${MANIFEST_LOCAL}")"
-
-  log "Canonical manifest repo count: ${new_count}"
-  if [[ "${old_count}" != "${new_count}" ]]; then
-    log "Manifest normalized (${old_count} -> ${new_count} repos)."
-  fi
-  if [[ "${new_count}" == "0" ]]; then
-    log "WARNING: Canonical manifest has zero repos; next boot custom-node sync from manifest will be skipped."
-  fi
-
-  log_manifest_vs_live_drift
-
-  sync_if_present "${MANIFEST_LOCAL}" "${MANIFEST_REMOTE}"
-  verify_file_if_present "${MANIFEST_LOCAL}" "${MANIFEST_REMOTE}"
-  log "Canonical manifest uploaded to ${MANIFEST_REMOTE}."
 }
 
 count_local_files() {
@@ -344,6 +295,26 @@ sync_codex_stable_files() {
     verify_file_if_present "${CODEX_HOME_DIR}/${codex_file}" "${REMOTE_ROOT}/codex-home/${codex_file}"
   done
 }
+
+sync_b2_manifest_from_live_nodes() {
+  local generated_manifest=""
+  local repo_count=0
+
+  if [[ ! -x "${BOOTSTRAP_ROOT}/generate_manifest.sh" && ! -f "${BOOTSTRAP_ROOT}/generate_manifest.sh" ]]; then
+    log "Skipping B2 manifest regeneration: ${BOOTSTRAP_ROOT}/generate_manifest.sh not found."
+    return
+  fi
+
+  generated_manifest="$(mktemp)"
+  log "Regenerating live custom node manifest for B2 catch-all."
+  WORKSPACE_ROOT="${WORKSPACE_ROOT}" COMFY_ROOT="${COMFY_ROOT}" bash "${BOOTSTRAP_ROOT}/generate_manifest.sh" "${generated_manifest}"
+  normalize_manifest_file "${generated_manifest}"
+  repo_count="$(grep -cve '^[[:space:]]*$' "${generated_manifest}" || true)"
+  log "Uploading regenerated B2 manifest with ${repo_count} repo(s)."
+  sync_if_present "${generated_manifest}" "${REMOTE_ROOT}/custom_nodes_manifest.txt"
+  verify_file_if_present "${generated_manifest}" "${REMOTE_ROOT}/custom_nodes_manifest.txt"
+  rm -f "${generated_manifest}"
+}
 main() {
   log "Snapshot starting."
   configure_rclone
@@ -363,13 +334,10 @@ main() {
   sync_if_present "${COMFY_ROOT}/user/__manager/config.ini" "${REMOTE_ROOT}/settings/manager-config.ini"
   verify_file_if_present "${COMFY_ROOT}/user/__manager/config.ini" "${REMOTE_ROOT}/settings/manager-config.ini"
 
-  refresh_and_sync_manifest
-
-  # Source of truth: manifest drives rebuilds on fresh instances.
-  # custom_nodes directory sync remains a safety snapshot for fast recovery.
   sync_directory_if_present "${CUSTOM_NODES_DIR}" "${REMOTE_ROOT}/custom_nodes" "${CUSTOM_NODES_RCLONE_ARGS[@]}"
   verify_directory_if_present "${CUSTOM_NODES_DIR}" "${REMOTE_ROOT}/custom_nodes" "${CUSTOM_NODES_RCLONE_ARGS[@]}"
 
+  sync_b2_manifest_from_live_nodes
   sync_codex_stable_files
 
   log "Snapshot complete."

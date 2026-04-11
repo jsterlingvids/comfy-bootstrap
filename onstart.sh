@@ -24,6 +24,8 @@ BOOTSTRAP_ROOT=""
 CUSTOM_NODES_DIR=""
 WORKFLOWS_DIR=""
 MANIFEST_LOCAL=""
+MANIFEST_REMOTE_CACHE=""
+MANIFEST_ACTIVE=""
 STATE_DIR=""
 
 log() {
@@ -227,8 +229,10 @@ initialize_paths() {
   BOOTSTRAP_ROOT="${WORKSPACE_ROOT}/comfy-bootstrap"
   CUSTOM_NODES_DIR="${COMFY_ROOT}/custom_nodes"
   WORKFLOWS_DIR="${COMFY_ROOT}/user/default/workflows"
-  MANIFEST_LOCAL="${BOOTSTRAP_ROOT}/custom_nodes_manifest.txt"
   STATE_DIR="${BOOTSTRAP_STATE_ROOT}"
+  MANIFEST_LOCAL="${BOOTSTRAP_ROOT}/custom_nodes_manifest.txt"
+  MANIFEST_REMOTE_CACHE="${STATE_DIR}/custom_nodes_manifest.remote.txt"
+  MANIFEST_ACTIVE="${STATE_DIR}/custom_nodes_manifest.merged.txt"
 }
 
 ensure_directories() {
@@ -264,66 +268,171 @@ count_manifest_repos() {
 }
 
 fetch_manifest() {
-  local tmp_manifest
-  local repo_count=0
-  tmp_manifest="$(mktemp)"
+  local tmp_remote=""
+  local normalized_local=""
+  local normalized_remote=""
+  local merged_tmp=""
+  local local_count=0
+  local remote_count=0
+  local merged_count=0
+
+  tmp_remote="$(mktemp)"
+  normalized_local="$(mktemp)"
+  normalized_remote="$(mktemp)"
+  merged_tmp="$(mktemp)"
+
+  normalize_manifest_file "${MANIFEST_LOCAL}" "${normalized_local}" "repo baseline"
+  local_count="$(wc -l < "${normalized_local}")"
 
   log "Attempting to download custom node manifest from B2."
-  if rclone copyto "${MANIFEST_REMOTE}" "${tmp_manifest}"; then
-    install -m 0644 "${tmp_manifest}" "${MANIFEST_LOCAL}"
-    log "Using manifest downloaded from B2."
-  elif [[ -f "${MANIFEST_LOCAL}" ]]; then
-    log "Remote manifest not found; using local fallback."
+  if rclone copyto "${MANIFEST_REMOTE}" "${tmp_remote}"; then
+    normalize_manifest_file "${tmp_remote}" "${normalized_remote}" "B2 catch-all"
+    remote_count="$(wc -l < "${normalized_remote}")"
+    install -m 0644 "${normalized_remote}" "${MANIFEST_REMOTE_CACHE}"
+    if ! cmp -s "${normalized_local}" "${normalized_remote}" 2>/dev/null; then
+      log "Repo baseline and B2 catch-all manifests differ; using the union of both."
+    fi
   else
-    log "No remote manifest found and no local fallback exists; continuing with an empty manifest."
-    : > "${MANIFEST_LOCAL}"
+    : > "${normalized_remote}"
+    remote_count=0
+    log "B2 manifest unavailable; continuing with repo baseline only."
   fi
 
-  rm -f "${tmp_manifest}"
+  cat "${normalized_local}" "${normalized_remote}" | sed '/^$/d' | sort -u > "${merged_tmp}"
+  install -m 0644 "${merged_tmp}" "${MANIFEST_ACTIVE}"
+  merged_count="$(wc -l < "${MANIFEST_ACTIVE}")"
 
-  repo_count="$(count_manifest_repos "${MANIFEST_LOCAL}")"
-  log "Manifest repository count: ${repo_count}"
-  if [[ "${repo_count}" == "0" ]]; then
-    log "WARNING: Manifest has zero repositories (empty/comment-only). Custom node sync will be skipped."
+  log "Manifest repo counts: baseline=${local_count} b2=${remote_count} merged=${merged_count}"
+  if (( merged_count == 0 )); then
+    log "WARNING: merged custom node manifest contains zero repos; custom node sync will be skipped."
   fi
+
+  rm -f "${tmp_remote}" "${normalized_local}" "${normalized_remote}" "${merged_tmp}"
+}
+
+normalize_manifest_file() {
+  local input_file="$1"
+  local output_file="$2"
+  local source_label="${3:-manifest}"
+  local raw_line=""
+  local trimmed=""
+  local invalid_count=0
+  local valid_count=0
+
+  : > "${output_file}"
+
+  if [[ ! -f "${input_file}" ]]; then
+    log "No ${source_label} manifest found at ${input_file}."
+    return
+  fi
+
+  while IFS= read -r raw_line || [[ -n "${raw_line}" ]]; do
+    trimmed="${raw_line#"${raw_line%%[![:space:]]*}"}"
+    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+
+    [[ -z "${trimmed}" ]] && continue
+    [[ "${trimmed}" == \#* ]] && continue
+
+    if [[ "${trimmed}" =~ ^https?://[^[:space:]]+$ || "${trimmed}" =~ ^git@github\.com:[^[:space:]]+$ ]]; then
+      printf '%s\n' "${trimmed}" >> "${output_file}"
+      valid_count=$((valid_count + 1))
+    else
+      invalid_count=$((invalid_count + 1))
+      log "Ignoring invalid ${source_label} manifest entry: ${trimmed}"
+    fi
+  done < "${input_file}"
+
+  sort -u -o "${output_file}" "${output_file}"
+  log "Normalized ${source_label} manifest: ${valid_count} valid entries, ${invalid_count} invalid entries."
 }
 
 sync_custom_nodes() {
-  if [[ ! -f "${MANIFEST_LOCAL}" ]]; then
-    log "Manifest file missing; skipping custom node sync."
+  if [[ ! -f "${MANIFEST_ACTIVE}" ]]; then
+    log "Merged manifest file missing; skipping custom node sync."
     return
   fi
 
-  local manifest_repo_count=0
-  manifest_repo_count="$(count_manifest_repos "${MANIFEST_LOCAL}")"
-  log "Preparing custom node sync from manifest with ${manifest_repo_count} repo(s)."
-  if [[ "${manifest_repo_count}" == "0" ]]; then
-    log "Skipping custom node sync because manifest has zero repositories."
-    return
-  fi
-
-  local repo_url repo_name repo_dir
+  local repo_url repo_name repo_dir repo_count=0 synced_count=0 failed_count=0
   while IFS= read -r repo_url || [[ -n "${repo_url}" ]]; do
-    repo_url="${repo_url#"${repo_url%%[![:space:]]*}"}"
-    repo_url="${repo_url%"${repo_url##*[![:space:]]}"}"
-
     [[ -z "${repo_url}" ]] && continue
-    [[ "${repo_url}" == \#* ]] && continue
-
+    repo_count=$((repo_count + 1))
     repo_name="$(basename "${repo_url}")"
     repo_name="${repo_name%.git}"
     repo_dir="${CUSTOM_NODES_DIR}/${repo_name}"
 
     if [[ -d "${repo_dir}/.git" ]]; then
-      log "Updating custom node: ${repo_url}"
-      git -C "${repo_dir}" pull --ff-only
+      if sync_custom_node_repo "${repo_url}" "${repo_dir}" "update"; then
+        synced_count=$((synced_count + 1))
+      else
+        failed_count=$((failed_count + 1))
+      fi
     elif [[ -d "${repo_dir}" ]]; then
       log "Directory exists without git metadata, skipping clone: ${repo_dir}"
+      failed_count=$((failed_count + 1))
     else
-      log "Cloning custom node: ${repo_url}"
-      git clone --depth 1 "${repo_url}" "${repo_dir}"
+      if sync_custom_node_repo "${repo_url}" "${repo_dir}" "clone"; then
+        synced_count=$((synced_count + 1))
+      else
+        failed_count=$((failed_count + 1))
+      fi
     fi
-  done < "${MANIFEST_LOCAL}"
+  done < "${MANIFEST_ACTIVE}"
+
+  log "Custom node sync summary: expected=${repo_count} succeeded=${synced_count} failed=${failed_count}"
+  if (( repo_count == 0 )); then
+    log "WARNING: no custom node repos were requested by the merged manifest."
+  elif (( failed_count > 0 )); then
+    log "WARNING: custom node sync incomplete; ${failed_count} repo(s) failed."
+  fi
+}
+
+sync_custom_node_repo() {
+  local repo_url="$1"
+  local repo_dir="$2"
+  local mode="$3"
+  local attempt=1
+  local origin_url=""
+
+  while (( attempt <= 3 )); do
+    if [[ "${mode}" == "update" ]]; then
+      log "Updating custom node (${attempt}/3): ${repo_url}"
+      if git -C "${repo_dir}" pull --ff-only; then
+        :
+      else
+        attempt=$((attempt + 1))
+        sleep 2
+        continue
+      fi
+    else
+      log "Cloning custom node (${attempt}/3): ${repo_url}"
+      if git clone --depth 1 "${repo_url}" "${repo_dir}"; then
+        :
+      else
+        rm -rf "${repo_dir}" 2>/dev/null || true
+        attempt=$((attempt + 1))
+        sleep 2
+        continue
+      fi
+    fi
+
+    if [[ ! -d "${repo_dir}/.git" ]]; then
+      attempt=$((attempt + 1))
+      sleep 2
+      continue
+    fi
+
+    origin_url="$(git -C "${repo_dir}" remote get-url origin 2>/dev/null || true)"
+    if [[ "${origin_url}" == "${repo_url}" ]]; then
+      return 0
+    fi
+
+    log "Origin URL mismatch for ${repo_dir}: expected ${repo_url}, got ${origin_url}"
+    attempt=$((attempt + 1))
+    sleep 2
+  done
+
+  log "Failed to ${mode} custom node after retries: ${repo_url}"
+  return 1
 }
 
 install_node_requirements() {
