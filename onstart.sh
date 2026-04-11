@@ -221,8 +221,9 @@ start_autosave_loop() {
 
   log "Starting autosave loop."
   (
+    export COMFY_ROOT WORKSPACE_ROOT
     while true; do
-      COMFY_ROOT="${COMFY_ROOT}" WORKSPACE_ROOT="${WORKSPACE_ROOT}" bash "${BOOTSTRAP_ROOT}/save_snapshot.sh" >>"${AUTOSAVE_LOG}" 2>&1 || true
+      bash "${BOOTSTRAP_ROOT}/save_snapshot.sh" >>"${AUTOSAVE_LOG}" 2>&1 || true
       sleep 900
     done
   ) &
