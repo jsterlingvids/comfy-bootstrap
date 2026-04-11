@@ -307,7 +307,7 @@ sync_b2_manifest_from_live_nodes() {
 
   generated_manifest="$(mktemp)"
   log "Regenerating live custom node manifest for B2 catch-all."
-  WORKSPACE_ROOT="${WORKSPACE_ROOT}" COMFY_ROOT="${COMFY_ROOT}" bash "${BOOTSTRAP_ROOT}/generate_manifest.sh" "${generated_manifest}"
+  env WORKSPACE_ROOT="${WORKSPACE_ROOT}" COMFY_ROOT="${COMFY_ROOT}" bash "${BOOTSTRAP_ROOT}/generate_manifest.sh" "${generated_manifest}"
   normalize_manifest_file "${generated_manifest}"
   repo_count="$(grep -cve '^[[:space:]]*$' "${generated_manifest}" || true)"
   log "Uploading regenerated B2 manifest with ${repo_count} repo(s)."
