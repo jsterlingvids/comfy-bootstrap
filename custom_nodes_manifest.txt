@@ -1,12 +1,2 @@
-# ComfyUI custom node manifest
-# One git repo URL per line.
-# Empty lines and lines starting with # are ignored.
-#
-# Add only the custom nodes you actually use.
-# Example:
-# https://github.com/ltdrdata/ComfyUI-Manager.git
-# https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git
-# https://github.com/Fannovel16/comfyui_controlnet_aux.git
-#
-# Starter example:
-# https://github.com/ltdrdata/ComfyUI-Manager.git
+https://github.com/Comfy-Org/ComfyUI-Manager
+https://github.com/SethRobinson/comfyui-workflow-to-api-converter-endpoint

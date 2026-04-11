@@ -4,6 +4,9 @@ set -euo pipefail
 readonly WORKSPACE_ROOT="${WORKSPACE_ROOT:-/workspace}"
 readonly DEFAULT_COMFY_ROOT="${COMFY_ROOT:-}"
 readonly REMOTE_ROOT="myb2:comfy-bootstrap"
+readonly BOOTSTRAP_ROOT="${WORKSPACE_ROOT}/comfy-bootstrap"
+readonly MANIFEST_LOCAL="${BOOTSTRAP_ROOT}/custom_nodes_manifest.txt"
+readonly MANIFEST_REMOTE="${REMOTE_ROOT}/custom_nodes_manifest.txt"
 readonly CODEX_HOME_DIR="${WORKSPACE_ROOT}/.codex"
 readonly RCLONE_RETRIES="${RCLONE_RETRIES:-3}"
 readonly RCLONE_LOW_LEVEL_RETRIES="${RCLONE_LOW_LEVEL_RETRIES:-10}"
@@ -127,6 +130,56 @@ sync_directory_if_present() {
   else
     log "Skipping missing directory: ${source_dir}"
   fi
+}
+
+count_manifest_repos() {
+  local manifest_file="$1"
+  awk '
+    {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+      if ($0 != "") {
+        count++
+      }
+    }
+    END {
+      print count+0
+    }
+  ' "${manifest_file}"
+}
+
+refresh_and_sync_manifest() {
+  local generated_manifest
+  local old_count=0
+  local new_count=0
+
+  if [[ ! -f "${BOOTSTRAP_ROOT}/generate_manifest.sh" ]]; then
+    log "Manifest generator missing: ${BOOTSTRAP_ROOT}/generate_manifest.sh"
+    exit 1
+  fi
+
+  generated_manifest="$(mktemp)"
+
+  if [[ -f "${MANIFEST_LOCAL}" ]]; then
+    old_count="$(count_manifest_repos "${MANIFEST_LOCAL}")"
+  fi
+
+  bash "${BOOTSTRAP_ROOT}/generate_manifest.sh" "${generated_manifest}"
+  new_count="$(count_manifest_repos "${generated_manifest}")"
+  log "Manifest source-of-truth repo count from live custom_nodes: ${new_count}"
+
+  mkdir -p "$(dirname "${MANIFEST_LOCAL}")"
+  if [[ ! -f "${MANIFEST_LOCAL}" ]] || ! cmp -s "${generated_manifest}" "${MANIFEST_LOCAL}"; then
+    install -m 0644 "${generated_manifest}" "${MANIFEST_LOCAL}"
+    log "Manifest regenerated from live custom_nodes (${old_count} -> ${new_count} repos)."
+  else
+    log "Manifest already matches live custom_nodes (${new_count} repos)."
+  fi
+
+  sync_if_present "${MANIFEST_LOCAL}" "${MANIFEST_REMOTE}"
+  verify_file_if_present "${MANIFEST_LOCAL}" "${MANIFEST_REMOTE}"
+  log "Manifest uploaded to ${MANIFEST_REMOTE}."
+
+  rm -f "${generated_manifest}"
 }
 
 count_local_files() {
@@ -270,6 +323,10 @@ main() {
   sync_if_present "${COMFY_ROOT}/user/__manager/config.ini" "${REMOTE_ROOT}/settings/manager-config.ini"
   verify_file_if_present "${COMFY_ROOT}/user/__manager/config.ini" "${REMOTE_ROOT}/settings/manager-config.ini"
 
+  refresh_and_sync_manifest
+
+  # Source of truth: manifest drives rebuilds on fresh instances.
+  # custom_nodes directory sync remains a safety snapshot for fast recovery.
   sync_directory_if_present "${CUSTOM_NODES_DIR}" "${REMOTE_ROOT}/custom_nodes" "${CUSTOM_NODES_RCLONE_ARGS[@]}"
   verify_directory_if_present "${CUSTOM_NODES_DIR}" "${REMOTE_ROOT}/custom_nodes" "${CUSTOM_NODES_RCLONE_ARGS[@]}"
 

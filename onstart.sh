@@ -247,8 +247,25 @@ restore_workflows() {
   fi
 }
 
+count_manifest_repos() {
+  local manifest_file="$1"
+  awk '
+    {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+      if ($0 == "" || $0 ~ /^#/) {
+        next
+      }
+      count++
+    }
+    END {
+      print count+0
+    }
+  ' "${manifest_file}"
+}
+
 fetch_manifest() {
   local tmp_manifest
+  local repo_count=0
   tmp_manifest="$(mktemp)"
 
   log "Attempting to download custom node manifest from B2."
@@ -263,11 +280,25 @@ fetch_manifest() {
   fi
 
   rm -f "${tmp_manifest}"
+
+  repo_count="$(count_manifest_repos "${MANIFEST_LOCAL}")"
+  log "Manifest repository count: ${repo_count}"
+  if [[ "${repo_count}" == "0" ]]; then
+    log "WARNING: Manifest has zero repositories (empty/comment-only). Custom node sync will be skipped."
+  fi
 }
 
 sync_custom_nodes() {
   if [[ ! -f "${MANIFEST_LOCAL}" ]]; then
     log "Manifest file missing; skipping custom node sync."
+    return
+  fi
+
+  local manifest_repo_count=0
+  manifest_repo_count="$(count_manifest_repos "${MANIFEST_LOCAL}")"
+  log "Preparing custom node sync from manifest with ${manifest_repo_count} repo(s)."
+  if [[ "${manifest_repo_count}" == "0" ]]; then
+    log "Skipping custom node sync because manifest has zero repositories."
     return
   fi
 

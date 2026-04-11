@@ -61,6 +61,7 @@ discover_comfy_root() {
 main() {
   local tmp_output=""
   local sorted_output=""
+  local repo_count=0
 
   discover_comfy_root
 
@@ -80,18 +81,19 @@ main() {
   while IFS= read -r git_dir; do
     local repo_dir remote_url
     repo_dir="$(dirname "${git_dir}")"
-    remote_url="$(git -C "${repo_dir}" remote get-url origin 2>/dev/null || true)"
+    remote_url="$(git -C "${repo_dir}" config --get remote.origin.url 2>/dev/null || true)"
 
     if [[ -n "${remote_url}" ]]; then
       printf '%s\n' "${remote_url}" >> "${tmp_output}"
     fi
   done < <(find "${CUSTOM_NODES_DIR}" -mindepth 1 -maxdepth 2 -type d -name .git | sort)
 
-  sort -u "${tmp_output}" > "${sorted_output}"
+  LC_ALL=C sort -u "${tmp_output}" > "${sorted_output}"
   install -m 0644 "${sorted_output}" "${OUTPUT_FILE}"
+  repo_count="$(wc -l < "${sorted_output}" | tr -d '[:space:]')"
   rm -f "${tmp_output}"
   rm -f "${sorted_output}"
-  log "Wrote manifest to ${OUTPUT_FILE}."
+  log "Wrote manifest to ${OUTPUT_FILE} with ${repo_count} repo URL(s)."
 }
 
 main "$@"
