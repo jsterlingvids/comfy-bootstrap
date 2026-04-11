@@ -207,6 +207,22 @@ install_node_requirements() {
   fi
 }
 
+install_comfy_requirements() {
+  local comfy_requirements="${COMFY_ROOT}/requirements.txt"
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    log "python3 is missing; cannot install ComfyUI requirements."
+    exit 1
+  fi
+
+  if [[ -f "${comfy_requirements}" ]]; then
+    log "Installing ComfyUI core requirements from ${comfy_requirements}"
+    python3 -m pip install --no-cache-dir -r "${comfy_requirements}"
+  else
+    log "ComfyUI requirements.txt not found at ${comfy_requirements}; skipping core dependency install."
+  fi
+}
+
 start_autosave_loop() {
   mkdir -p "$(dirname "${AUTOSAVE_LOG}")"
   touch "${AUTOSAVE_LOG}"
@@ -280,6 +296,7 @@ main() {
   restore_workflows
   fetch_manifest
   sync_custom_nodes
+  install_comfy_requirements
   install_node_requirements
   ensure_comfy_running
   start_autosave_loop
