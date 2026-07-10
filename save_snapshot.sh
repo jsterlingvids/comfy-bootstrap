@@ -126,7 +126,7 @@ sync_directory_if_present() {
 
   if [[ -d "${source_dir}" ]]; then
     log "Syncing ${source_dir} -> ${remote_dir}"
-    rclone_run sync "${source_dir}" "${remote_dir}" "$@"
+    rclone_run sync "${source_dir}" "${remote_dir}" --delete-excluded "$@"
   else
     log "Skipping missing directory: ${source_dir}"
   fi
@@ -243,7 +243,6 @@ verify_directory_if_present() {
   local remote_dir="$2"
   local combined_report=""
   local local_files=""
-  local remote_files=""
   local local_bytes=""
   local verify_args=()
   local arg=""
@@ -275,13 +274,9 @@ verify_directory_if_present() {
   rm -f "${combined_report}"
   local_files="$(count_local_files "${source_dir}")"
   local_bytes="$(count_local_bytes "${source_dir}")"
-  remote_files="$(count_remote_files "${remote_dir}" "${verify_args[@]}")"
-
-  if [[ "${local_files}" != "${remote_files}" ]]; then
-    log "Verification count mismatch for ${source_dir}: local=${local_files} remote=${remote_files}"
-    exit 1
-  fi
-
+  # `rclone check` above is the source of truth for the filtered tree. A separate
+  # remote file count can include intentionally excluded stale cache/.git objects
+  # on B2, causing a false failure after a successful integrity check.
   log "Verified ${source_dir}: ${local_files} files, ${local_bytes} bytes"
 }
 
