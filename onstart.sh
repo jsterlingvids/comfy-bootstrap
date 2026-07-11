@@ -4,6 +4,7 @@ set -euo pipefail
 readonly WORKSPACE_ROOT="${WORKSPACE_ROOT:-/workspace}"
 readonly DEFAULT_COMFY_ROOT="${COMFY_ROOT:-}"
 readonly MANIFEST_REMOTE="myb2:comfy-bootstrap/custom_nodes_manifest.txt"
+readonly REMOTE_CUSTOM_NODES="myb2:comfy-bootstrap/custom_nodes"
 readonly REMOTE_WORKFLOWS="myb2:comfy-bootstrap/workflows"
 readonly REMOTE_CODEX_HOME="myb2:comfy-bootstrap/codex-home"
 readonly AUTOSAVE_LOG="${WORKSPACE_ROOT}/autosave.log"
@@ -27,6 +28,7 @@ MANIFEST_LOCAL=""
 MANIFEST_REMOTE_CACHE=""
 MANIFEST_ACTIVE=""
 STATE_DIR=""
+CUSTOM_NODES_SNAPSHOT_RESTORED=0
 
 log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
@@ -34,13 +36,17 @@ log() {
 
 pip_install_with_fallback() {
   local -a pip_args=("$@")
+  local -a network_args=(
+    --retries "${PIP_NETWORK_RETRIES:-20}"
+    --timeout "${PIP_NETWORK_TIMEOUT:-180}"
+  )
 
-  if python3 -m pip "${pip_args[@]}"; then
+  if python3 -m pip "${pip_args[@]}" "${network_args[@]}"; then
     return 0
   fi
 
-  log "pip install failed; retrying with --break-system-packages."
-  python3 -m pip "${pip_args[@]}" --break-system-packages
+  log "pip install failed; retrying with --break-system-packages and resilient network settings."
+  python3 -m pip "${pip_args[@]}" "${network_args[@]}" --break-system-packages
 }
 
 require_env() {
@@ -280,6 +286,25 @@ restore_workflows() {
   fi
 }
 
+restore_custom_nodes_snapshot() {
+  local restored_file_count=0
+
+  log "Attempting fast custom-node restore from Backblaze B2 snapshot."
+  if ! rclone sync "${REMOTE_CUSTOM_NODES}" "${CUSTOM_NODES_DIR}" --create-empty-src-dirs; then
+    log "Custom-node snapshot restore failed; falling back to manifest clones."
+    return
+  fi
+
+  restored_file_count="$(find "${CUSTOM_NODES_DIR}" -type f | wc -l)"
+  if (( restored_file_count == 0 )); then
+    log "Custom-node snapshot was empty; falling back to manifest clones."
+    return
+  fi
+
+  CUSTOM_NODES_SNAPSHOT_RESTORED=1
+  log "Custom-node snapshot restore complete: ${restored_file_count} files."
+}
+
 count_manifest_repos() {
   local manifest_file="$1"
   awk '
@@ -376,6 +401,11 @@ normalize_manifest_file() {
 }
 
 sync_custom_nodes() {
+  if (( CUSTOM_NODES_SNAPSHOT_RESTORED )); then
+    log "Using restored custom-node snapshot; skipping slow Git manifest synchronization."
+    return
+  fi
+
   if [[ ! -f "${MANIFEST_ACTIVE}" ]]; then
     log "Merged manifest file missing; skipping custom node sync."
     return
@@ -869,18 +899,24 @@ main() {
   discover_comfy_root
   initialize_paths
   configure_rclone
-  restore_codex_home
-  configure_codex_defaults
-  install_codex_cli
   ensure_directories
   restore_workflows
+
+  # The paid-instance acceptance gate comes first: a usable Comfy/PyTorch
+  # runtime must not wait behind Codex or dozens of optional node clones.
+  install_comfy_requirements
+  restore_custom_nodes_snapshot
   fetch_manifest
   sync_custom_nodes
-  install_comfy_requirements
   install_node_requirements
   run_custom_node_install_scripts
   ensure_comfy_running
   validate_workflow_nodes_available
+
+  # Nice-to-have tooling is deliberately post-readiness.
+  restore_codex_home
+  configure_codex_defaults
+  install_codex_cli
   start_autosave_loop
   log "Bootstrap complete."
 }
