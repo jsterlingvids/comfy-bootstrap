@@ -771,19 +771,24 @@ wait_for_comfy_listener() {
 
 ensure_comfyui_manager_v4() {
   local manager_package="comfyui-manager==4.2.2"
-  local legacy_manager_dir="${CUSTOM_NODES_DIR}/ComfyUI-Manager"
-  local disabled_manager_dir="${legacy_manager_dir}.disabled"
+  local manager_archive_dir="${BOOTSTRAP_ROOT}/disabled-custom-nodes"
+  local archived_manager_dir="${manager_archive_dir}/ComfyUI-Manager"
+  local legacy_manager_dir
 
   log "Ensuring pip-installed ComfyUI-Manager v4 (${manager_package})."
   python3 -m pip install --break-system-packages --no-cache-dir --upgrade "${manager_package}"
 
-  if [[ -d "${legacy_manager_dir}" ]]; then
-    if [[ -e "${disabled_manager_dir}" ]]; then
-      rm -rf "${disabled_manager_dir}"
+  # V4 is a pip-installed Comfy extension. Keep any V3 clone OUTSIDE
+  # custom_nodes so ComfyUI cannot import it alongside the package.
+  mkdir -p "${manager_archive_dir}"
+  for legacy_manager_dir in "${CUSTOM_NODES_DIR}/ComfyUI-Manager" "${CUSTOM_NODES_DIR}/ComfyUI-Manager.disabled"; do
+    if [[ -e "${legacy_manager_dir}" ]]; then
+      rm -rf "${archived_manager_dir}"
+      mv "${legacy_manager_dir}" "${archived_manager_dir}"
+      log "Archived legacy custom-node ComfyUI-Manager outside custom_nodes."
+      break
     fi
-    mv "${legacy_manager_dir}" "${disabled_manager_dir}"
-    log "Disabled legacy custom-node ComfyUI-Manager clone."
-  fi
+  done
 }
 
 ensure_comfy_running() {
