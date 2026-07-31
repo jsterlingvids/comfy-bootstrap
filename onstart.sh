@@ -812,8 +812,23 @@ ensure_comfy_running() {
   done
 
   if (( has_listen == 0 )); then
-    comfy_args=(--listen 0.0.0.0 "${comfy_args[@]}")
+    comfy_args=(--listen 127.0.0.1 "${comfy_args[@]}")
   fi
+
+  # Manager v4 keeps its privileged HTTP surfaces disabled on a public bind.
+  # Access this remote ComfyUI through the per-device SSH tunnel instead.
+  for ((i=0; i<${#comfy_args[@]}; i++)); do
+    case "${comfy_args[i]}" in
+      --listen|--host)
+        if (( i + 1 < ${#comfy_args[@]} )); then
+          comfy_args[i+1]=127.0.0.1
+        fi
+        ;;
+      --listen=*|--host=*)
+        comfy_args[i]="${comfy_args[i]%%=*}=127.0.0.1"
+        ;;
+    esac
+  done
 
   if [[ " ${comfy_args[*]} " != *" --enable-manager "* ]]; then
     comfy_args+=(--enable-manager)
