@@ -769,6 +769,23 @@ wait_for_comfy_listener() {
   done
 }
 
+ensure_comfyui_manager_v4() {
+  local manager_package="comfyui-manager==4.2.2"
+  local legacy_manager_dir="${CUSTOM_NODES_DIR}/ComfyUI-Manager"
+  local disabled_manager_dir="${legacy_manager_dir}.disabled"
+
+  log "Ensuring pip-installed ComfyUI-Manager v4 (${manager_package})."
+  python3 -m pip install --break-system-packages --no-cache-dir --upgrade "${manager_package}"
+
+  if [[ -d "${legacy_manager_dir}" ]]; then
+    if [[ -e "${disabled_manager_dir}" ]]; then
+      rm -rf "${disabled_manager_dir}"
+    fi
+    mv "${legacy_manager_dir}" "${disabled_manager_dir}"
+    log "Disabled legacy custom-node ComfyUI-Manager clone."
+  fi
+}
+
 ensure_comfy_running() {
   local comfy_args_raw="${COMFYUI_ARGS:---listen 0.0.0.0 --port ${DEFAULT_COMFY_PORT}}"
   local -a comfy_args=()
@@ -791,6 +808,10 @@ ensure_comfy_running() {
 
   if (( has_listen == 0 )); then
     comfy_args=(--listen 0.0.0.0 "${comfy_args[@]}")
+  fi
+
+  if [[ " ${comfy_args[*]} " != *" --enable-manager "* ]]; then
+    comfy_args+=(--enable-manager)
   fi
 
   configured_port="$(get_comfy_port_from_args "${DEFAULT_COMFY_PORT}" "${comfy_args[@]}")"
@@ -936,6 +957,7 @@ main() {
   sync_custom_nodes
   install_node_requirements
   run_custom_node_install_scripts
+  ensure_comfyui_manager_v4
   ensure_comfy_running
   validate_workflow_nodes_available
 
