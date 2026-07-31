@@ -771,7 +771,7 @@ wait_for_comfy_listener() {
 
 ensure_comfyui_manager_v4() {
   local manager_package="comfyui-manager==4.2.2"
-  local manager_archive_dir="${BOOTSTRAP_ROOT}/disabled-custom-nodes"
+  local manager_archive_dir="${BOOTSTRAP_STATE_ROOT}/disabled-custom-nodes"
   local archived_manager_dir="${manager_archive_dir}/ComfyUI-Manager"
   local legacy_manager_dir
 
