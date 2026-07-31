@@ -74,17 +74,43 @@ install_packages_if_missing() {
   apt-get install -y "${missing[@]}"
 }
 
-install_codex_cli() {
-  if command -v codex >/dev/null 2>&1; then
-    log "Codex CLI already installed."
+ensure_node_22() {
+  local node_major="0"
+
+  if command -v node >/dev/null 2>&1; then
+    node_major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || printf '0')"
+  fi
+
+  if [[ "${node_major}" =~ ^[0-9]+$ ]] && (( node_major >= 22 )); then
+    log "Node.js ${node_major} already satisfies the Agent Panel requirement."
     return
   fi
 
   if ! command -v npm >/dev/null 2>&1; then
-    log "Installing Node.js and npm for Codex CLI."
+    log "Installing Node.js and npm bootstrap packages."
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
     apt-get install -y nodejs npm
+  fi
+
+  log "Installing Node.js 22 for the ComfyUI Agent Panel."
+  npm install -g n
+  n 22
+  hash -r
+  node_major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || printf '0')"
+  if [[ ! "${node_major}" =~ ^[0-9]+$ ]] || (( node_major < 22 )); then
+    log "Node.js 22 installation failed; found Node.js ${node_major}."
+    return 1
+  fi
+  log "Node.js ${node_major} installed."
+}
+
+install_codex_cli() {
+  ensure_node_22
+
+  if command -v codex >/dev/null 2>&1; then
+    log "Codex CLI already installed."
+    return
   fi
 
   log "Installing Codex CLI."
