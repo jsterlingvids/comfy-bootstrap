@@ -1003,6 +1003,9 @@ main() {
   # The paid-instance acceptance gate comes first: a usable Comfy/PyTorch
   # runtime must not wait behind Codex or dozens of optional node clones.
   install_comfy_requirements
+  # The shared Agent Panel is a frontend extension; Node.js 22 is a runtime
+  # requirement independent of optional remote Codex authentication.
+  ensure_node_22
   restore_custom_nodes_snapshot
   fetch_manifest
   sync_custom_nodes
