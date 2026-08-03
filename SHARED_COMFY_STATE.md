@@ -4,13 +4,13 @@
 
 ## Required configuration
 
-Set the **same** value on both templates, for example:
+Set the **same** value on both templates. The current canonical state is the established Vast root:
 
 ```text
-COMFY_STATE_ROOT=myb2:comfy-state
+COMFY_STATE_ROOT=myb2:comfy-bootstrap
 ```
 
-Both providers must receive B2 credentials with read/write/list/delete access restricted to the same `comfy-state` bucket. The separate bootstrap repositories and their provider-specific startup settings remain independent.
+Runpod needs a distinct B2 application key scoped to the existing `comfy-bootstrap` bucket; Vast can retain its existing bucket-scoped key. This preserves the existing Vast workflows/panel snapshot without a migration.
 
 ## Shared state
 
