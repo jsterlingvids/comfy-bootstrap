@@ -3,7 +3,12 @@ set -euo pipefail
 
 readonly WORKSPACE_ROOT="${WORKSPACE_ROOT:-/workspace}"
 readonly DEFAULT_COMFY_ROOT="${COMFY_ROOT:-}"
-readonly REMOTE_ROOT="myb2:comfy-bootstrap"
+# Only COMFY_STATE_ROOT is shared across Vast and Runpod. Codex auth remains
+# provider-local by design and is never migrated through the shared state.
+readonly LEGACY_B2_ROOT="${B2_ROOT:-myb2:comfy-bootstrap}"
+readonly COMFY_STATE_ROOT="${COMFY_STATE_ROOT:-${LEGACY_B2_ROOT}}"
+readonly CODEX_STATE_ROOT="${CODEX_STATE_ROOT:-${LEGACY_B2_ROOT}/codex-home}"
+readonly REMOTE_ROOT="${COMFY_STATE_ROOT}"
 readonly BOOTSTRAP_ROOT="${WORKSPACE_ROOT}/comfy-bootstrap"
 readonly MANIFEST_LOCAL="${BOOTSTRAP_ROOT}/custom_nodes_manifest.txt"
 readonly MANIFEST_REMOTE="${REMOTE_ROOT}/custom_nodes_manifest.txt"
@@ -286,8 +291,8 @@ sync_codex_stable_files() {
   mkdir -p "${CODEX_HOME_DIR}"
 
   for codex_file in "${CODEX_STABLE_FILES[@]}"; do
-    sync_if_present "${CODEX_HOME_DIR}/${codex_file}" "${REMOTE_ROOT}/codex-home/${codex_file}"
-    verify_file_if_present "${CODEX_HOME_DIR}/${codex_file}" "${REMOTE_ROOT}/codex-home/${codex_file}"
+    sync_if_present "${CODEX_HOME_DIR}/${codex_file}" "${CODEX_STATE_ROOT}/${codex_file}"
+    verify_file_if_present "${CODEX_HOME_DIR}/${codex_file}" "${CODEX_STATE_ROOT}/${codex_file}"
   done
 }
 

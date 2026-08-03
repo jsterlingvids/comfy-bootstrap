@@ -3,10 +3,18 @@ set -euo pipefail
 
 readonly WORKSPACE_ROOT="${WORKSPACE_ROOT:-/workspace}"
 readonly DEFAULT_COMFY_ROOT="${COMFY_ROOT:-}"
-readonly MANIFEST_REMOTE="myb2:comfy-bootstrap/custom_nodes_manifest.txt"
-readonly REMOTE_CUSTOM_NODES="myb2:comfy-bootstrap/custom_nodes"
-readonly REMOTE_WORKFLOWS="myb2:comfy-bootstrap/workflows"
-readonly REMOTE_CODEX_HOME="myb2:comfy-bootstrap/codex-home"
+# COMFY_STATE_ROOT is the provider-neutral, non-secret state surface.
+# Point Vast and Runpod at the same value to share workflows, settings, and
+# custom nodes. Keep CODEX_STATE_ROOT provider-local: interactive credentials
+# must never be copied between GPU providers.
+readonly LEGACY_B2_ROOT="${B2_ROOT:-myb2:comfy-bootstrap}"
+readonly COMFY_STATE_ROOT="${COMFY_STATE_ROOT:-${LEGACY_B2_ROOT}}"
+readonly CODEX_STATE_ROOT="${CODEX_STATE_ROOT:-${LEGACY_B2_ROOT}/codex-home}"
+readonly MANIFEST_REMOTE="${COMFY_STATE_ROOT}/custom_nodes_manifest.txt"
+readonly REMOTE_CUSTOM_NODES="${COMFY_STATE_ROOT}/custom_nodes"
+readonly REMOTE_WORKFLOWS="${COMFY_STATE_ROOT}/workflows"
+readonly REMOTE_SETTINGS="${COMFY_STATE_ROOT}/settings"
+readonly REMOTE_CODEX_HOME="${CODEX_STATE_ROOT}"
 readonly AUTOSAVE_LOG="${WORKSPACE_ROOT}/autosave.log"
 readonly AUTOSAVE_PIDFILE="${WORKSPACE_ROOT}/comfy-bootstrap-autosave.pid"
 readonly COMFY_LOG="${WORKSPACE_ROOT}/comfyui.log"
@@ -310,6 +318,28 @@ restore_workflows() {
   else
     log "Workflow restore skipped or failed; continuing with local state."
   fi
+}
+
+restore_settings() {
+  local remote_file local_file
+  local -a state_files=(
+    "extra_model_paths.yaml:${COMFY_ROOT}/extra_model_paths.yaml"
+    "comfy.settings.json:${COMFY_ROOT}/user/default/comfy.settings.json"
+    "ComfyUI-Manager-config.ini:${COMFY_ROOT}/user/default/ComfyUI-Manager/config.ini"
+    "manager-config.ini:${COMFY_ROOT}/user/__manager/config.ini"
+  )
+
+  log "Restoring ComfyUI and Manager settings from Backblaze B2."
+  for state_file in "${state_files[@]}"; do
+    remote_file="${REMOTE_SETTINGS}/${state_file%%:*}"
+    local_file="${state_file#*:}"
+    mkdir -p "$(dirname "${local_file}")"
+    if rclone copyto "${remote_file}" "${local_file}"; then
+      log "Restored setting: ${state_file%%:*}"
+    else
+      log "Setting unavailable; preserving local/default value: ${state_file%%:*}"
+    fi
+  done
 }
 
 restore_custom_nodes_snapshot() {
@@ -968,6 +998,7 @@ main() {
   configure_rclone
   ensure_directories
   restore_workflows
+  restore_settings
 
   # The paid-instance acceptance gate comes first: a usable Comfy/PyTorch
   # runtime must not wait behind Codex or dozens of optional node clones.

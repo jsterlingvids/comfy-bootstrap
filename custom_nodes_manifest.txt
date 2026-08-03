@@ -1,4 +1,5 @@
 https://github.com/Comfy-Org/ComfyUI-Manager
+https://github.com/artokun/comfyui-mcp-panel.git
 https://github.com/GeekatplayStudio/LTX-2-3-LipSync
 https://github.com/Lightricks/ComfyUI-LTXVideo
 https://github.com/SethRobinson/comfyui-workflow-to-api-converter-endpoint
