@@ -308,6 +308,12 @@ sync_b2_manifest_from_live_nodes() {
   generated_manifest="$(mktemp)"
   log "Regenerating live custom node manifest for B2 catch-all."
   env WORKSPACE_ROOT="${WORKSPACE_ROOT}" COMFY_ROOT="${COMFY_ROOT}" bash "${BOOTSTRAP_ROOT}/generate_manifest.sh" "${generated_manifest}"
+  # Restored node snapshots deliberately exclude .git metadata, so they cannot
+  # always regenerate origins. Keep the tracked canonical manifest in the
+  # shared state rather than replacing it with an empty live scan.
+  if [[ -f "${MANIFEST_LOCAL}" ]]; then
+    cat "${MANIFEST_LOCAL}" >> "${generated_manifest}"
+  fi
   normalize_manifest_file "${generated_manifest}"
   repo_count="$(grep -cve '^[[:space:]]*$' "${generated_manifest}" || true)"
   log "Uploading regenerated B2 manifest with ${repo_count} repo(s)."
