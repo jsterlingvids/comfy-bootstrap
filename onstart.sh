@@ -868,6 +868,9 @@ ensure_comfy_running() {
   fi
 
   configured_port="$(get_comfy_port_from_args "${DEFAULT_COMFY_PORT}" "${comfy_args[@]}")"
+  # Shared with the sourced private Tailscale helper so Serve always points at
+  # the actual loopback ComfyUI listener, even when a template changes its port.
+  COMFYUI_ACTIVE_PORT="${configured_port}"
   listener_pid="$(find_comfy_listener_pid_for_port "${configured_port}" || true)"
   if [[ -n "${listener_pid}" ]]; then
     log "ComfyUI already serving port ${configured_port} with PID ${listener_pid}."
@@ -1004,8 +1007,11 @@ main() {
   # existing Comfy image is already present; fail closed if Comfy or Tailscale
   # cannot be made healthy.
   if [[ "${TAILSCALE_PROOF_ONLY:-0}" == "1" ]]; then
-    log "Running bounded Tailnet proof only; skipping B2-dependent bootstrap work."
+    log "Running bounded Tailnet proof only; skipping B2-dependent state/bootstrap work."
     ensure_directories
+    # Core Comfy requirements are required to prove the app; they do not restore
+    # state, download models, or install optional nodes.
+    install_comfy_requirements
     ensure_comfy_running
     start_private_tailscale_comfy
     log "Bounded Tailnet proof bootstrap complete."
