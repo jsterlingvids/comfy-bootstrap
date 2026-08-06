@@ -23,6 +23,9 @@ Set these on the Vast.ai instance before `onstart.sh` runs:
 - `B2_APP_KEY`
 - `COMFY_ROOT` (optional override if ComfyUI is not in a standard location)
 - `OPENAI_API_KEY` (optional, if you want Codex CLI ready for API-key auth)
+- `TAILSCALE_AUTH_KEY` (optional; configure as a temporary encrypted Vast **account** environment variable only for a bounded Tailnet proof)
+- `TAILSCALE_ENABLED=1` (optional; enables the private Tailnet Comfy proxy)
+- `TAILSCALE_PROVIDER=vast` (recommended when enabled)
 
 The scripts use those values to configure the `myb2` rclone remote at runtime.
 

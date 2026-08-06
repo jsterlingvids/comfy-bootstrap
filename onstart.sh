@@ -21,6 +21,9 @@ readonly COMFY_LOG="${WORKSPACE_ROOT}/comfyui.log"
 readonly CODEX_HOME_DIR="${WORKSPACE_ROOT}/.codex"
 readonly BOOTSTRAP_STATE_ROOT="${WORKSPACE_ROOT}/.comfy-bootstrap-state"
 readonly DEFAULT_COMFY_PORT="8188"
+readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/tailscale-private-comfy.sh
+source "${SCRIPT_DIR}/lib/tailscale-private-comfy.sh"
 readonly CODEX_STABLE_FILES=(
   "auth.json"
   "config.toml"
@@ -1013,6 +1016,7 @@ main() {
   run_custom_node_install_scripts
   ensure_comfyui_manager_v4
   ensure_comfy_running
+  start_private_tailscale_comfy
   validate_workflow_nodes_available
 
   # Nice-to-have tooling is deliberately post-readiness.
