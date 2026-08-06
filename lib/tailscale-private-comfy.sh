@@ -40,7 +40,11 @@ start_private_tailscale_comfy() {
   require_env "TAILSCALE_AUTH_KEY" || return 1
 
   local socket="${TAILSCALE_SOCKET:-/run/tailscale/tailscaled.sock}"
-  local state="${TAILSCALE_STATE:-mem:}"
+  # HTTPS Serve needs a writable certificate/config root. /run is tmpfs inside
+  # the disposable container, so this remains non-persistent across teardown
+  # while allowing Tailscale to obtain its Tailnet TLS certificate.
+  local var_root="${TAILSCALE_VAR_ROOT:-/run/tailscale/state}"
+  local state="${TAILSCALE_STATE:-${var_root}/tailscaled.state}"
   local port="${TAILSCALE_COMFY_PORT:-8443}"
   # onstart.sh sets COMFYUI_ACTIVE_PORT after enforcing loopback-only binding.
   # Fall back only for legacy callers that genuinely use the default listener.
@@ -52,7 +56,7 @@ start_private_tailscale_comfy() {
   [[ "${target_port}" =~ ^[0-9]+$ ]] && (( target_port >= 1 && target_port <= 65535 )) || { log "Invalid loopback ComfyUI target port."; return 1; }
 
   install_tailscale_if_missing
-  install -d -m 0755 "$(dirname "${socket}")"
+  install -d -m 0700 "$(dirname "${socket}")" "${var_root}"
 
   local tun_flag=()
   if [[ ! -c /dev/net/tun ]]; then
@@ -62,7 +66,7 @@ start_private_tailscale_comfy() {
 
   if ! tailscale --socket="${socket}" status >/dev/null 2>&1; then
     log "Starting ephemeral Tailscale daemon for private ComfyUI access."
-    tailscaled --state="${state}" --socket="${socket}" "${tun_flag[@]}" \
+    tailscaled --state="${state}" --statedir="${var_root}" --socket="${socket}" "${tun_flag[@]}" \
       >> "${WORKSPACE_ROOT}/tailscaled.log" 2>&1 &
     local attempt=0
     until [[ -S "${socket}" ]] || (( attempt >= 30 )); do
