@@ -995,7 +995,24 @@ for node in frontend_missing:
 PY
 }
 
+hydrate_runtime_env_allowlist() {
+  # Vast's /root/onstart.sh launcher can drop account-level environment values
+  # when it forks the user onstart script, while PID 1 still holds them. Restore
+  # only the explicit bootstrap-secret/config allowlist; never dump or log env.
+  [[ -r /proc/1/environ ]] || return 0
+  local item name
+  while IFS= read -r -d '' item; do
+    name="${item%%=*}"
+    case "${name}" in
+      B2_ACCOUNT_ID|B2_APP_KEY|B2_BUCKET|B2_ENDPOINT|TAILSCALE_AUTH_KEY|TAILSCALE_ENABLED|TAILSCALE_PROVIDER|TAILSCALE_COMFY_PORT|TAILSCALE_STATE|TAILSCALE_VAR_ROOT)
+        [[ -v "${name}" ]] || export "${item}"
+        ;;
+    esac
+  done < /proc/1/environ
+}
+
 main() {
+  hydrate_runtime_env_allowlist
   log "Bootstrap starting."
   wait_for_workspace
   install_packages_if_missing
