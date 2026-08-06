@@ -998,6 +998,20 @@ main() {
   install_packages_if_missing
   discover_comfy_root
   initialize_paths
+
+  # A bounded Tailnet ingress proof deliberately avoids B2 restores, snapshots,
+  # node changes, model downloads, and Codex setup.  It is only safe when an
+  # existing Comfy image is already present; fail closed if Comfy or Tailscale
+  # cannot be made healthy.
+  if [[ "${TAILSCALE_PROOF_ONLY:-0}" == "1" ]]; then
+    log "Running bounded Tailnet proof only; skipping B2-dependent bootstrap work."
+    ensure_directories
+    ensure_comfy_running
+    start_private_tailscale_comfy
+    log "Bounded Tailnet proof bootstrap complete."
+    return 0
+  fi
+
   configure_rclone
   ensure_directories
   restore_workflows
