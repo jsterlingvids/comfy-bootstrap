@@ -62,19 +62,52 @@ pip_install_with_fallback() {
 
 requirements_use_existing_torch_build_env() {
   local requirements_file="$1"
-  grep -Eiq 'github\.com[/:]facebookresearch/sam2([@#?[:space:]]|$)' "${requirements_file}"
+  grep -Eiq 'github\.com[/:]facebookresearch/sam2(\.git)?([@#?[:space:]]|$)' "${requirements_file}"
 }
 
 capture_torch_runtime_identity() {
   python3 - <<'PY'
+import importlib
 import importlib.metadata as metadata
+import json
+import torch
+import torchvision
+
+payload = {
+    "torch_version": torch.__version__,
+    "torch_path": torch.__file__,
+    "torch_cuda": torch.version.cuda,
+    "torch_cuda_available": torch.cuda.is_available(),
+    "torchvision_version": torchvision.__version__,
+    "torchvision_path": torchvision.__file__,
+}
+try:
+    sage = importlib.import_module("sageattention")
+    payload.update({
+        "sageattention_version": metadata.version("sageattention"),
+        "sageattention_path": sage.__file__,
+        "sageattention_import": "ok",
+    })
+except metadata.PackageNotFoundError:
+    payload.update({
+        "sageattention_version": "absent",
+        "sageattention_path": "absent",
+        "sageattention_import": "absent",
+    })
+print(json.dumps(payload, sort_keys=True))
+PY
+}
+
+write_torch_runtime_constraints() {
+  local constraints_file="$1"
+  python3 - "${constraints_file}" <<'PY'
+import importlib.metadata as metadata
+import sys
 import torch
 
-try:
-    sage = metadata.version("sageattention")
-except metadata.PackageNotFoundError:
-    sage = "absent"
-print(f"torch={torch.__version__};sageattention={sage}")
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    handle.write(f"torch=={torch.__version__}\n")
+    handle.write(f"torchvision=={metadata.version('torchvision')}\n")
 PY
 }
 
@@ -84,10 +117,23 @@ import importlib.metadata as metadata
 from packaging.version import Version
 import torch
 
+minimums = {
+    "setuptools": "61.0",
+    "torchvision": "0.20.1",
+    "numpy": "1.24.4",
+    "tqdm": "4.66.1",
+    "hydra-core": "1.3.2",
+    "iopath": "0.1.10",
+    "pillow": "9.4.0",
+}
 if Version(torch.__version__.split("+", 1)[0]) < Version("2.5.1"):
     raise SystemExit(f"SAM2 requires torch>=2.5.1; found {torch.__version__}")
-if Version(metadata.version("setuptools")) < Version("61.0"):
-    raise SystemExit("SAM2 requires setuptools>=61.0")
+if not torch.cuda.is_available() or not torch.version.cuda:
+    raise SystemExit("SAM2 build requires the existing CUDA-enabled Torch runtime")
+for package, minimum in minimums.items():
+    found = metadata.version(package)
+    if Version(found.split("+", 1)[0]) < Version(minimum):
+        raise SystemExit(f"SAM2 requires {package}>={minimum}; found {found}")
 PY
 }
 
@@ -96,7 +142,7 @@ verify_torch_runtime_unchanged() {
   local actual=""
   actual="$(capture_torch_runtime_identity)" || return 1
   if [[ "${actual}" != "${expected}" ]]; then
-    log "Torch/SageAttention runtime identity changed during custom-node installation; expected ${expected}, found ${actual}."
+    log "Torch/torchvision/SageAttention runtime identity changed during custom-node installation; refusing readiness."
     return 1
   fi
 }
@@ -627,20 +673,52 @@ install_node_requirements() {
   for requirements_file in "${requirements_files[@]}"; do
     log "Installing Python requirements from ${requirements_file}"
     if requirements_use_existing_torch_build_env "${requirements_file}"; then
-      if ! verify_existing_torch_build_env; then
+      local filtered_requirements=""
+      local sam2_specs_file=""
+      local torch_constraints=""
+      local sam2_spec=""
+      local sam2_count=0
+      filtered_requirements="$(mktemp)"
+      sam2_specs_file="$(mktemp)"
+      torch_constraints="$(mktemp)"
+      grep -Eiv 'github\.com[/:]facebookresearch/sam2(\.git)?([@#?[:space:]]|$)' "${requirements_file}" > "${filtered_requirements}" || true
+      grep -Ei 'github\.com[/:]facebookresearch/sam2(\.git)?([@#?[:space:]]|$)' "${requirements_file}" > "${sam2_specs_file}" || true
+      sam2_count="$(grep -Ecve '^[[:space:]]*(#|$)' "${sam2_specs_file}" || true)"
+      if [[ "${sam2_count}" != "1" ]]; then
         failed_count=$((failed_count + 1))
-        log "WARNING: refusing SAM2 installation because the existing Torch build environment is incomplete."
+        log "WARNING: expected exactly one SAM2 requirement, found ${sam2_count}; refusing ambiguous installation."
+        rm -f "${filtered_requirements}" "${sam2_specs_file}" "${torch_constraints}"
         continue
       fi
-      torch_runtime_before="$(capture_torch_runtime_identity)"
-      log "SAM2 detected; reusing the existing Torch build environment without PEP 517 isolation."
-      if pip_install_with_fallback install --no-cache-dir --no-build-isolation -r "${requirements_file}" &&
+      torch_runtime_before="$(capture_torch_runtime_identity)" || {
+        failed_count=$((failed_count + 1))
+        rm -f "${filtered_requirements}" "${sam2_specs_file}" "${torch_constraints}"
+        continue
+      }
+      write_torch_runtime_constraints "${torch_constraints}"
+      if grep -Eqv '^[[:space:]]*(#|$)' "${filtered_requirements}" &&
+         ! pip_install_with_fallback install --no-cache-dir -c "${torch_constraints}" -r "${filtered_requirements}"; then
+        failed_count=$((failed_count + 1))
+        log "WARNING: failed installing non-SAM2 requirements while preserving Torch constraints."
+        rm -f "${filtered_requirements}" "${sam2_specs_file}" "${torch_constraints}"
+        continue
+      fi
+      if ! verify_existing_torch_build_env; then
+        failed_count=$((failed_count + 1))
+        log "WARNING: refusing SAM2 installation because the existing CUDA/Torch build environment is incomplete."
+        rm -f "${filtered_requirements}" "${sam2_specs_file}" "${torch_constraints}"
+        continue
+      fi
+      sam2_spec="$(grep -Eve '^[[:space:]]*(#|$)' "${sam2_specs_file}")"
+      log "SAM2 detected; building only SAM2 against the existing constrained Torch runtime."
+      if pip_install_with_fallback install --no-cache-dir --no-build-isolation --no-deps -c "${torch_constraints}" "${sam2_spec}" &&
          verify_torch_runtime_unchanged "${torch_runtime_before}"; then
         success_count=$((success_count + 1))
       else
         failed_count=$((failed_count + 1))
-        log "WARNING: failed installing SAM2-bearing requirements or Torch/SageAttention identity verification failed."
+        log "WARNING: SAM2 installation or Torch/torchvision/SageAttention identity verification failed."
       fi
+      rm -f "${filtered_requirements}" "${sam2_specs_file}" "${torch_constraints}"
     elif pip_install_with_fallback install --no-cache-dir -r "${requirements_file}"; then
       success_count=$((success_count + 1))
     else
@@ -653,7 +731,8 @@ install_node_requirements() {
   if (( failed_count == 0 )); then
     write_stamp "${stamp_file}" "${current_fingerprint}"
   else
-    log "Requirements install had failures; preserving previous stamp to retry next launch."
+    log "Requirements install had failures; preserving previous stamp and refusing readiness."
+    return 1
   fi
 }
 
