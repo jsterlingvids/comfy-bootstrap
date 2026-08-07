@@ -24,13 +24,38 @@ class Sam2BootstrapTests(unittest.TestCase):
             onstart,
         )
         self.assertIn(
-            '&&\n         verify_torch_runtime_unchanged "${torch_runtime_before}"',
+            'elif pip_install_with_fallback install --no-cache-dir -c "${torch_constraints}" -r "${requirements_file}" &&\n'
+            '         verify_torch_runtime_unchanged "${torch_runtime_before}"; then',
             onstart,
         )
-        self.assertEqual(onstart.count('local torch_constraints=""'), 2)
-        self.assertIn('PIP_CONSTRAINT="${torch_constraints}" python3 "${install_script}"', onstart)
-        self.assertIn('PIP_CONSTRAINT="${torch_constraints}" bash "${install_script}"', onstart)
+        self.assertEqual(onstart.count('local torch_constraints=""'), 4)
+        self.assertIn('PYTHON="${RUNTIME_PYTHON}" PIP_CONSTRAINT="${torch_constraints}" "${RUNTIME_PYTHON}" "${install_script}"', onstart)
+        self.assertIn('PYTHON="${RUNTIME_PYTHON}" PIP_CONSTRAINT="${torch_constraints}" bash "${install_script}"', onstart)
         self.assertIn("Install script run had failures; preserving previous stamp and refusing readiness.", onstart)
+        self.assertIn("verify_approved_torch_runtime", onstart)
+        self.assertIn('readonly APPROVED_TORCH_VERSION="2.9.1+cu130"', onstart)
+        self.assertIn('readonly APPROVED_TORCHVISION_VERSION="0.24.1+cu130"', onstart)
+        self.assertIn('readonly APPROVED_TORCH_CUDA_VERSION="13.0"', onstart)
+        self.assertIn('readonly APPROVED_SAGEATTENTION_VERSION="1.0.6"', onstart)
+        self.assertLess(
+            onstart.index("Approved Torch/torchvision/CUDA/SageAttention runtime preflight failed before custom-node requirements."),
+            onstart.index("Custom node requirements unchanged; skipping reinstall."),
+        )
+        self.assertLess(
+            onstart.index("Approved Torch/torchvision/CUDA/SageAttention runtime preflight failed before custom-node install scripts."),
+            onstart.index("Custom node install scripts unchanged; skipping re-run."),
+        )
+        self.assertIn('RUNTIME_PYTHON=/opt/conda/bin/python3', onstart)
+        self.assertIn('"${RUNTIME_PYTHON}" -m pip', onstart)
+        self.assertIn('nohup "${RUNTIME_PYTHON}" main.py', onstart)
+        self.assertIn('runtime_environment_fingerprint_material', onstart)
+        self.assertIn('compute_comfy_requirements_runtime_fingerprint', onstart)
+        self.assertIn('"${RUNTIME_PYTHON}" -m pip freeze --all', onstart)
+        self.assertIn('process_executable', onstart)
+        install_hook_body = onstart.split('run_custom_node_install_scripts() {', 1)[1].split('install_comfy_requirements() {', 1)[0]
+        self.assertNotIn('write_stamp "${requirements_stamp_file}"', install_hook_body)
+        self.assertNotIn('current_fingerprint="$(compute_node_install_scripts_fingerprint', install_hook_body.split('if (( failed_count == 0 )); then', 1)[1])
+        self.assertIn("Final approved Torch/torchvision/CUDA/SageAttention gate failed", onstart)
 
 
 if __name__ == "__main__":

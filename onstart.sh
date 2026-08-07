@@ -21,6 +21,15 @@ readonly COMFY_LOG="${WORKSPACE_ROOT}/comfyui.log"
 readonly CODEX_HOME_DIR="${WORKSPACE_ROOT}/.codex"
 readonly BOOTSTRAP_STATE_ROOT="${WORKSPACE_ROOT}/.comfy-bootstrap-state"
 readonly DEFAULT_COMFY_PORT="8188"
+RUNTIME_PYTHON=python3
+if [[ -x /opt/conda/bin/python3 ]]; then
+  RUNTIME_PYTHON=/opt/conda/bin/python3
+fi
+readonly RUNTIME_PYTHON
+readonly APPROVED_TORCH_VERSION="2.9.1+cu130"
+readonly APPROVED_TORCHVISION_VERSION="0.24.1+cu130"
+readonly APPROVED_TORCH_CUDA_VERSION="13.0"
+readonly APPROVED_SAGEATTENTION_VERSION="1.0.6"
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/tailscale-private-comfy.sh
 source "${SCRIPT_DIR}/lib/tailscale-private-comfy.sh"
@@ -52,12 +61,12 @@ pip_install_with_fallback() {
     --timeout "${PIP_NETWORK_TIMEOUT:-180}"
   )
 
-  if python3 -m pip "${pip_args[@]}" "${network_args[@]}"; then
+  if "${RUNTIME_PYTHON}" -m pip "${pip_args[@]}" "${network_args[@]}"; then
     return 0
   fi
 
   log "pip install failed; retrying with --break-system-packages and resilient network settings."
-  python3 -m pip "${pip_args[@]}" "${network_args[@]}" --break-system-packages
+  "${RUNTIME_PYTHON}" -m pip "${pip_args[@]}" "${network_args[@]}" --break-system-packages
 }
 
 requirements_use_existing_torch_build_env() {
@@ -66,7 +75,7 @@ requirements_use_existing_torch_build_env() {
 }
 
 capture_torch_runtime_identity() {
-  python3 - <<'PY'
+  "${RUNTIME_PYTHON}" - <<'PY'
 import importlib
 import importlib.metadata as metadata
 import json
@@ -98,9 +107,41 @@ print(json.dumps(payload, sort_keys=True))
 PY
 }
 
+verify_approved_torch_runtime() {
+  APPROVED_TORCH_VERSION="${APPROVED_TORCH_VERSION}" \
+  APPROVED_TORCHVISION_VERSION="${APPROVED_TORCHVISION_VERSION}" \
+  APPROVED_TORCH_CUDA_VERSION="${APPROVED_TORCH_CUDA_VERSION}" \
+  APPROVED_SAGEATTENTION_VERSION="${APPROVED_SAGEATTENTION_VERSION}" \
+  "${RUNTIME_PYTHON}" - <<'PY'
+import importlib
+import importlib.metadata as metadata
+import os
+import torch
+import torchvision
+
+expected = {
+    "torch": os.environ["APPROVED_TORCH_VERSION"],
+    "torchvision": os.environ["APPROVED_TORCHVISION_VERSION"],
+    "cuda": os.environ["APPROVED_TORCH_CUDA_VERSION"],
+    "sageattention": os.environ["APPROVED_SAGEATTENTION_VERSION"],
+}
+actual = {
+    "torch": torch.__version__,
+    "torchvision": torchvision.__version__,
+    "cuda": torch.version.cuda,
+    "sageattention": metadata.version("sageattention"),
+}
+importlib.import_module("sageattention")
+if not torch.cuda.is_available():
+    raise SystemExit("approved runtime requires CUDA availability")
+if actual != expected:
+    raise SystemExit(f"approved runtime identity mismatch: expected={expected!r} actual={actual!r}")
+PY
+}
+
 write_torch_runtime_constraints() {
   local constraints_file="$1"
-  python3 - "${constraints_file}" <<'PY'
+  "${RUNTIME_PYTHON}" - "${constraints_file}" <<'PY'
 import importlib.metadata as metadata
 import sys
 import torch
@@ -112,7 +153,7 @@ PY
 }
 
 verify_existing_torch_build_env() {
-  python3 - <<'PY'
+  "${RUNTIME_PYTHON}" - <<'PY'
 import importlib.metadata as metadata
 from packaging.version import Version
 import torch
@@ -140,6 +181,10 @@ PY
 verify_torch_runtime_unchanged() {
   local expected="$1"
   local actual=""
+  verify_approved_torch_runtime || {
+    log "Runtime no longer matches the immutable approved Torch/torchvision/CUDA/SageAttention identity; refusing readiness."
+    return 1
+  }
   actual="$(capture_torch_runtime_identity)" || return 1
   if [[ "${actual}" != "${expected}" ]]; then
     log "Torch/torchvision/SageAttention runtime identity changed during custom-node installation; refusing readiness."
@@ -221,7 +266,42 @@ compute_file_fingerprint() {
   {
     printf '%s\n' "${source_file}"
     sha256sum "${source_file}"
-    python3 --version 2>&1 || true
+    "${RUNTIME_PYTHON}" --version 2>&1 || true
+  } | sha256sum | awk '{print $1}'
+}
+
+runtime_environment_fingerprint_material() {
+  local resolved_python=""
+  resolved_python="$(readlink -f "$(command -v "${RUNTIME_PYTHON}")")"
+  printf 'runtime_python=%s\n' "${resolved_python}"
+  "${RUNTIME_PYTHON}" - <<'PY'
+import importlib.metadata as metadata
+import json
+import sys
+import torch
+import torchvision
+
+print(json.dumps({
+    "executable": sys.executable,
+    "prefix": sys.prefix,
+    "python": sys.version,
+    "torch": torch.__version__,
+    "torchvision": torchvision.__version__,
+    "cuda": torch.version.cuda,
+    "sageattention": metadata.version("sageattention"),
+}, sort_keys=True))
+PY
+  "${RUNTIME_PYTHON}" -m pip freeze --all | LC_ALL=C sort
+  if [[ -f /opt/comfy-image/vcs-ref.txt ]]; then
+    sha256sum /opt/comfy-image/vcs-ref.txt
+  fi
+}
+
+compute_comfy_requirements_runtime_fingerprint() {
+  local requirements_file="$1"
+  {
+    compute_file_fingerprint "${requirements_file}"
+    runtime_environment_fingerprint_material
   } | sha256sum | awk '{print $1}'
 }
 
@@ -238,7 +318,7 @@ compute_node_requirements_fingerprint() {
     sha256sum "${requirements_file}"
   done < <(find "${CUSTOM_NODES_DIR}" -type f -name requirements.txt | sort)
 
-  python3 --version 2>&1 || true
+  runtime_environment_fingerprint_material
 }
 
 compute_node_install_scripts_fingerprint() {
@@ -254,7 +334,7 @@ compute_node_install_scripts_fingerprint() {
     sha256sum "${install_script}"
   done < <(find "${CUSTOM_NODES_DIR}" -maxdepth 2 -type f \( -name install.py -o -name install.sh \) | sort)
 
-  python3 --version 2>&1 || true
+  runtime_environment_fingerprint_material
 }
 
 read_stamp() {
@@ -648,9 +728,13 @@ install_node_requirements() {
   local success_count=0
   local failed_count=0
 
-  if ! command -v python3 >/dev/null 2>&1; then
+  if ! command -v "${RUNTIME_PYTHON}" >/dev/null 2>&1; then
     log "python3 is missing; cannot install node requirements."
     exit 1
+  fi
+  if ! verify_approved_torch_runtime; then
+    log "Approved Torch/torchvision/CUDA/SageAttention runtime preflight failed before custom-node requirements."
+    return 1
   fi
 
   mapfile -t requirements_files < <(find "${CUSTOM_NODES_DIR}" -type f -name requirements.txt | sort)
@@ -737,6 +821,7 @@ install_node_requirements() {
 
   log "Custom node requirements install summary: total=${#requirements_files[@]} succeeded=${success_count} failed=${failed_count}"
   if (( failed_count == 0 )); then
+    current_fingerprint="$(compute_node_requirements_fingerprint | sha256sum | awk '{print $1}')"
     write_stamp "${stamp_file}" "${current_fingerprint}"
   else
     log "Requirements install had failures; preserving previous stamp and refusing readiness."
@@ -755,9 +840,13 @@ run_custom_node_install_scripts() {
   local success_count=0
   local failed_count=0
 
-  if ! command -v python3 >/dev/null 2>&1; then
+  if ! command -v "${RUNTIME_PYTHON}" >/dev/null 2>&1; then
     log "python3 is missing; cannot run custom node install scripts."
     exit 1
+  fi
+  if ! verify_approved_torch_runtime; then
+    log "Approved Torch/torchvision/CUDA/SageAttention runtime preflight failed before custom-node install scripts."
+    return 1
   fi
 
   mapfile -t install_scripts < <(find "${CUSTOM_NODES_DIR}" -maxdepth 2 -type f \( -name install.py -o -name install.sh \) | sort)
@@ -785,7 +874,7 @@ run_custom_node_install_scripts() {
   for install_script in "${install_scripts[@]}"; do
     log "Running custom node install script with constrained Torch runtime: ${install_script}"
     if [[ "${install_script}" == *.py ]]; then
-      if (cd "$(dirname "${install_script}")" && PIP_CONSTRAINT="${torch_constraints}" python3 "${install_script}") &&
+      if (cd "$(dirname "${install_script}")" && PATH="$(dirname "${RUNTIME_PYTHON}"):${PATH}" PYTHON="${RUNTIME_PYTHON}" PIP_CONSTRAINT="${torch_constraints}" "${RUNTIME_PYTHON}" "${install_script}") &&
          verify_torch_runtime_unchanged "${torch_runtime_before}"; then
         success_count=$((success_count + 1))
       else
@@ -793,7 +882,7 @@ run_custom_node_install_scripts() {
         log "WARNING: install script failed or changed Torch/torchvision/SageAttention identity: ${install_script}"
       fi
     else
-      if (cd "$(dirname "${install_script}")" && PIP_CONSTRAINT="${torch_constraints}" bash "${install_script}") &&
+      if (cd "$(dirname "${install_script}")" && PATH="$(dirname "${RUNTIME_PYTHON}"):${PATH}" PYTHON="${RUNTIME_PYTHON}" PIP_CONSTRAINT="${torch_constraints}" bash "${install_script}") &&
          verify_torch_runtime_unchanged "${torch_runtime_before}"; then
         success_count=$((success_count + 1))
       else
@@ -806,6 +895,9 @@ run_custom_node_install_scripts() {
 
   log "Custom node install script summary: total=${#install_scripts[@]} succeeded=${success_count} failed=${failed_count}"
   if (( failed_count == 0 )); then
+    # Stamp only the exact pre-hook scripts/environment that were executed. If a
+    # hook mutates itself, requirements, or installed packages, the next launch
+    # must observe that drift and rerun the affected phase.
     write_stamp "${stamp_file}" "${current_fingerprint}"
   else
     log "Install script run had failures; preserving previous stamp and refusing readiness."
@@ -817,26 +909,39 @@ install_comfy_requirements() {
   local comfy_requirements="${COMFY_ROOT}/requirements.txt"
   local current_fingerprint=""
   local current_stamp=""
+  local torch_runtime_before=""
+  local torch_constraints=""
   local stamp_file="${STATE_DIR}/comfy-requirements.sha256"
 
-  if ! command -v python3 >/dev/null 2>&1; then
-    log "python3 is missing; cannot install ComfyUI requirements."
+  if ! command -v "${RUNTIME_PYTHON}" >/dev/null 2>&1; then
+    log "Selected runtime Python is missing; cannot install ComfyUI requirements."
+    exit 1
+  fi
+  if ! verify_approved_torch_runtime; then
+    log "Approved Torch/torchvision/CUDA/SageAttention runtime preflight failed before ComfyUI requirements."
     exit 1
   fi
 
   if [[ -f "${comfy_requirements}" ]]; then
-    current_fingerprint="$(compute_file_fingerprint "${comfy_requirements}")"
+    current_fingerprint="$(compute_comfy_requirements_runtime_fingerprint "${comfy_requirements}")"
     current_stamp="$(read_stamp "${stamp_file}")"
     if [[ "${current_fingerprint}" == "${current_stamp}" ]]; then
       log "ComfyUI core requirements unchanged; skipping reinstall."
       return
     fi
 
-    log "Installing ComfyUI core requirements from ${comfy_requirements}"
-    if ! pip_install_with_fallback install --no-cache-dir -r "${comfy_requirements}"; then
-      log "Failed installing ComfyUI core requirements."
+    log "Installing ComfyUI core requirements from ${comfy_requirements} under immutable Torch constraints."
+    torch_runtime_before="$(capture_torch_runtime_identity)" || exit 1
+    torch_constraints="$(mktemp)"
+    write_torch_runtime_constraints "${torch_constraints}"
+    if ! pip_install_with_fallback install --no-cache-dir -c "${torch_constraints}" -r "${comfy_requirements}" ||
+       ! verify_torch_runtime_unchanged "${torch_runtime_before}"; then
+      rm -f "${torch_constraints}"
+      log "Failed installing ComfyUI core requirements without runtime identity drift."
       exit 1
     fi
+    rm -f "${torch_constraints}"
+    current_fingerprint="$(compute_comfy_requirements_runtime_fingerprint "${comfy_requirements}")"
     write_stamp "${stamp_file}" "${current_fingerprint}"
   else
     log "ComfyUI requirements.txt not found at ${comfy_requirements}; skipping core dependency install."
@@ -905,16 +1010,22 @@ pid_matches_comfy_root() {
   local pid="$1"
   local cmdline=""
   local cwd=""
+  local process_executable=""
+  local expected_executable=""
 
   [[ -r "/proc/${pid}/cmdline" ]] || return 1
   [[ -L "/proc/${pid}/cwd" ]] || return 1
+  [[ -L "/proc/${pid}/exe" ]] || return 1
 
   cmdline="$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null || true)"
   cwd="$(readlink -f "/proc/${pid}/cwd" 2>/dev/null || true)"
+  process_executable="$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)"
+  expected_executable="$(readlink -f "$(command -v "${RUNTIME_PYTHON}")" 2>/dev/null || true)"
 
   [[ -n "${cmdline}" ]] || return 1
   [[ "${cmdline}" == *"main.py"* ]] || return 1
   [[ "${cwd}" == "${COMFY_ROOT}" ]] || return 1
+  [[ -n "${expected_executable}" && "${process_executable}" == "${expected_executable}" ]] || return 1
 }
 
 find_comfy_listener_pid_for_port() {
@@ -963,9 +1074,24 @@ ensure_comfyui_manager_v4() {
   local manager_archive_dir="${BOOTSTRAP_STATE_ROOT}/disabled-custom-nodes"
   local archived_manager_dir="${manager_archive_dir}/ComfyUI-Manager"
   local legacy_manager_dir
+  local torch_runtime_before=""
+  local torch_constraints=""
 
   log "Ensuring pip-installed ComfyUI-Manager v4 (${manager_package})."
-  python3 -m pip install --break-system-packages --no-cache-dir --upgrade "${manager_package}"
+  if "${RUNTIME_PYTHON}" -c 'import importlib.metadata; raise SystemExit(0 if importlib.metadata.version("comfyui-manager") == "4.2.2" else 1)' 2>/dev/null; then
+    log "ComfyUI-Manager 4.2.2 already installed."
+  else
+    torch_runtime_before="$(capture_torch_runtime_identity)" || return 1
+    torch_constraints="$(mktemp)"
+    write_torch_runtime_constraints "${torch_constraints}"
+    if ! "${RUNTIME_PYTHON}" -m pip install --break-system-packages --no-cache-dir --upgrade -c "${torch_constraints}" "${manager_package}" ||
+       ! verify_torch_runtime_unchanged "${torch_runtime_before}"; then
+      rm -f "${torch_constraints}"
+      log "ComfyUI-Manager installation failed or changed approved runtime identity."
+      return 1
+    fi
+    rm -f "${torch_constraints}"
+  fi
 
   # V4 is a pip-installed Comfy extension. Keep any V3 clone OUTSIDE
   # custom_nodes so ComfyUI cannot import it alongside the package.
@@ -1055,7 +1181,7 @@ ensure_comfy_running() {
   log "Starting ComfyUI with args: ${comfy_args[*]}"
   launch_pid="$(
     cd "${COMFY_ROOT}"
-    nohup python3 main.py "${comfy_args[@]}" >>"${COMFY_LOG}" 2>&1 &
+    nohup "${RUNTIME_PYTHON}" main.py "${comfy_args[@]}" >>"${COMFY_LOG}" 2>&1 &
     echo $!
   )"
   log "ComfyUI launch requested with PID ${launch_pid}; logging to ${COMFY_LOG}."
@@ -1085,7 +1211,7 @@ validate_workflow_nodes_available() {
   configured_port="$(get_comfy_port_from_args "${DEFAULT_COMFY_PORT}" "${comfy_args[@]}")"
 
   log "Validating workflow node classes against live ComfyUI object_info."
-  python3 - "${WORKFLOWS_DIR}" "${configured_port}" <<'PY'
+  "${RUNTIME_PYTHON}" - "${WORKFLOWS_DIR}" "${configured_port}" <<'PY'
 import glob
 import json
 import re
@@ -1207,6 +1333,10 @@ main() {
   sync_custom_nodes
   install_node_requirements
   run_custom_node_install_scripts
+  verify_approved_torch_runtime || {
+    log "Final approved Torch/torchvision/CUDA/SageAttention gate failed after all custom-node dependency hooks."
+    return 1
+  }
   ensure_comfyui_manager_v4
   ensure_comfy_running
   start_private_tailscale_comfy
