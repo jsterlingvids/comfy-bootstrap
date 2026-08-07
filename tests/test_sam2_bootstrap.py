@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -7,6 +9,45 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 class Sam2BootstrapTests(unittest.TestCase):
+    def test_verify_approved_runtime_does_not_reassign_readonly_constants(self) -> None:
+        onstart = (REPO / "onstart.sh").read_text(encoding="utf-8")
+        function_body = "verify_approved_torch_runtime() {" + onstart.split(
+            "verify_approved_torch_runtime() {", 1
+        )[1].split("\nwrite_torch_runtime_constraints() {", 1)[0]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fake_python = Path(temp_dir) / "python3"
+            fake_python.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -Eeuo pipefail\n"
+                "[[ \"$1\" == - ]]\n"
+                "[[ \"$2\" == 2.9.1+cu130 ]]\n"
+                "[[ \"$3\" == 0.24.1+cu130 ]]\n"
+                "[[ \"$4\" == 13.0 ]]\n"
+                "[[ \"$5\" == 1.0.6 ]]\n"
+                "cat >/dev/null\n",
+                encoding="utf-8",
+            )
+            fake_python.chmod(0o755)
+            harness = (
+                "set -Eeuo pipefail\n"
+                f"RUNTIME_PYTHON={fake_python!s}\n"
+                "readonly RUNTIME_PYTHON\n"
+                "readonly APPROVED_TORCH_VERSION=2.9.1+cu130\n"
+                "readonly APPROVED_TORCHVISION_VERSION=0.24.1+cu130\n"
+                "readonly APPROVED_TORCH_CUDA_VERSION=13.0\n"
+                "readonly APPROVED_SAGEATTENTION_VERSION=1.0.6\n"
+                + function_body
+                + "\nverify_approved_torch_runtime\n"
+            )
+            result = subprocess.run(
+                ["bash", "-c", harness],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=10,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout)
+
     def test_sam2_reuses_existing_torch_without_build_isolation(self) -> None:
         onstart = (REPO / "onstart.sh").read_text(encoding="utf-8")
         self.assertIn("requirements_use_existing_torch_build_env", onstart)

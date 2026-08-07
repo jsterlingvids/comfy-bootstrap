@@ -108,22 +108,22 @@ PY
 }
 
 verify_approved_torch_runtime() {
-  APPROVED_TORCH_VERSION="${APPROVED_TORCH_VERSION}" \
-  APPROVED_TORCHVISION_VERSION="${APPROVED_TORCHVISION_VERSION}" \
-  APPROVED_TORCH_CUDA_VERSION="${APPROVED_TORCH_CUDA_VERSION}" \
-  APPROVED_SAGEATTENTION_VERSION="${APPROVED_SAGEATTENTION_VERSION}" \
-  "${RUNTIME_PYTHON}" - <<'PY'
+  "${RUNTIME_PYTHON}" - \
+    "${APPROVED_TORCH_VERSION}" \
+    "${APPROVED_TORCHVISION_VERSION}" \
+    "${APPROVED_TORCH_CUDA_VERSION}" \
+    "${APPROVED_SAGEATTENTION_VERSION}" <<'PY'
 import importlib
 import importlib.metadata as metadata
-import os
+import sys
 import torch
 import torchvision
 
 expected = {
-    "torch": os.environ["APPROVED_TORCH_VERSION"],
-    "torchvision": os.environ["APPROVED_TORCHVISION_VERSION"],
-    "cuda": os.environ["APPROVED_TORCH_CUDA_VERSION"],
-    "sageattention": os.environ["APPROVED_SAGEATTENTION_VERSION"],
+    "torch": sys.argv[1],
+    "torchvision": sys.argv[2],
+    "cuda": sys.argv[3],
+    "sageattention": sys.argv[4],
 }
 actual = {
     "torch": torch.__version__,
