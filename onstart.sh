@@ -670,29 +670,35 @@ install_node_requirements() {
 
   local requirements_file=""
   local torch_runtime_before=""
+  local torch_constraints=""
+  torch_runtime_before="$(capture_torch_runtime_identity)" || {
+    log "WARNING: unable to capture the approved Torch runtime before custom-node dependency installation."
+    return 1
+  }
+  torch_constraints="$(mktemp)"
+  write_torch_runtime_constraints "${torch_constraints}"
+
   for requirements_file in "${requirements_files[@]}"; do
     log "Installing Python requirements from ${requirements_file}"
     if requirements_use_existing_torch_build_env "${requirements_file}"; then
       local filtered_requirements=""
       local sam2_specs_file=""
-      local torch_constraints=""
       local sam2_spec=""
       local sam2_count=0
       filtered_requirements="$(mktemp)"
       sam2_specs_file="$(mktemp)"
-      torch_constraints="$(mktemp)"
       grep -Eiv 'github\.com[/:]facebookresearch/sam2(\.git)?([@#?[:space:]]|$)' "${requirements_file}" > "${filtered_requirements}" || true
       grep -Ei 'github\.com[/:]facebookresearch/sam2(\.git)?([@#?[:space:]]|$)' "${requirements_file}" > "${sam2_specs_file}" || true
       sam2_count="$(grep -Ecve '^[[:space:]]*(#|$)' "${sam2_specs_file}" || true)"
       if [[ "${sam2_count}" != "1" ]]; then
         failed_count=$((failed_count + 1))
         log "WARNING: expected exactly one SAM2 requirement, found ${sam2_count}; refusing ambiguous installation."
-        rm -f "${filtered_requirements}" "${sam2_specs_file}" "${torch_constraints}"
+        rm -f "${filtered_requirements}" "${sam2_specs_file}"
         continue
       fi
       torch_runtime_before="$(capture_torch_runtime_identity)" || {
         failed_count=$((failed_count + 1))
-        rm -f "${filtered_requirements}" "${sam2_specs_file}" "${torch_constraints}"
+        rm -f "${filtered_requirements}" "${sam2_specs_file}"
         continue
       }
       write_torch_runtime_constraints "${torch_constraints}"
@@ -700,13 +706,13 @@ install_node_requirements() {
          ! pip_install_with_fallback install --no-cache-dir -c "${torch_constraints}" -r "${filtered_requirements}"; then
         failed_count=$((failed_count + 1))
         log "WARNING: failed installing non-SAM2 requirements while preserving Torch constraints."
-        rm -f "${filtered_requirements}" "${sam2_specs_file}" "${torch_constraints}"
+        rm -f "${filtered_requirements}" "${sam2_specs_file}"
         continue
       fi
       if ! verify_existing_torch_build_env; then
         failed_count=$((failed_count + 1))
         log "WARNING: refusing SAM2 installation because the existing CUDA/Torch build environment is incomplete."
-        rm -f "${filtered_requirements}" "${sam2_specs_file}" "${torch_constraints}"
+        rm -f "${filtered_requirements}" "${sam2_specs_file}"
         continue
       fi
       sam2_spec="$(grep -Eve '^[[:space:]]*(#|$)' "${sam2_specs_file}")"
@@ -718,14 +724,16 @@ install_node_requirements() {
         failed_count=$((failed_count + 1))
         log "WARNING: SAM2 installation or Torch/torchvision/SageAttention identity verification failed."
       fi
-      rm -f "${filtered_requirements}" "${sam2_specs_file}" "${torch_constraints}"
-    elif pip_install_with_fallback install --no-cache-dir -r "${requirements_file}"; then
+      rm -f "${filtered_requirements}" "${sam2_specs_file}"
+    elif pip_install_with_fallback install --no-cache-dir -c "${torch_constraints}" -r "${requirements_file}" &&
+         verify_torch_runtime_unchanged "${torch_runtime_before}"; then
       success_count=$((success_count + 1))
     else
       failed_count=$((failed_count + 1))
-      log "WARNING: failed installing requirements from ${requirements_file}"
+      log "WARNING: failed installing requirements from ${requirements_file} while preserving Torch/torchvision/SageAttention identity."
     fi
   done
+  rm -f "${torch_constraints}"
 
   log "Custom node requirements install summary: total=${#requirements_files[@]} succeeded=${success_count} failed=${failed_count}"
   if (( failed_count == 0 )); then
@@ -742,6 +750,8 @@ run_custom_node_install_scripts() {
   local current_stamp=""
   local stamp_file="${STATE_DIR}/custom-node-install-scripts.sha256"
   local install_script=""
+  local torch_runtime_before=""
+  local torch_constraints=""
   local success_count=0
   local failed_count=0
 
@@ -765,31 +775,41 @@ run_custom_node_install_scripts() {
     return
   fi
 
+  torch_runtime_before="$(capture_torch_runtime_identity)" || {
+    log "WARNING: unable to capture the approved Torch runtime before custom-node install scripts."
+    return 1
+  }
+  torch_constraints="$(mktemp)"
+  write_torch_runtime_constraints "${torch_constraints}"
+
   for install_script in "${install_scripts[@]}"; do
+    log "Running custom node install script with constrained Torch runtime: ${install_script}"
     if [[ "${install_script}" == *.py ]]; then
-      log "Running custom node install script: ${install_script}"
-      if (cd "$(dirname "${install_script}")" && python3 "${install_script}"); then
+      if (cd "$(dirname "${install_script}")" && PIP_CONSTRAINT="${torch_constraints}" python3 "${install_script}") &&
+         verify_torch_runtime_unchanged "${torch_runtime_before}"; then
         success_count=$((success_count + 1))
       else
         failed_count=$((failed_count + 1))
-        log "WARNING: install script failed: ${install_script}"
+        log "WARNING: install script failed or changed Torch/torchvision/SageAttention identity: ${install_script}"
       fi
     else
-      log "Running custom node install script: ${install_script}"
-      if (cd "$(dirname "${install_script}")" && bash "${install_script}"); then
+      if (cd "$(dirname "${install_script}")" && PIP_CONSTRAINT="${torch_constraints}" bash "${install_script}") &&
+         verify_torch_runtime_unchanged "${torch_runtime_before}"; then
         success_count=$((success_count + 1))
       else
         failed_count=$((failed_count + 1))
-        log "WARNING: install script failed: ${install_script}"
+        log "WARNING: install script failed or changed Torch/torchvision/SageAttention identity: ${install_script}"
       fi
     fi
   done
+  rm -f "${torch_constraints}"
 
   log "Custom node install script summary: total=${#install_scripts[@]} succeeded=${success_count} failed=${failed_count}"
   if (( failed_count == 0 )); then
     write_stamp "${stamp_file}" "${current_fingerprint}"
   else
-    log "Install script run had failures; preserving previous stamp to retry next launch."
+    log "Install script run had failures; preserving previous stamp and refusing readiness."
+    return 1
   fi
 }
 

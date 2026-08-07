@@ -19,6 +19,18 @@ class Sam2BootstrapTests(unittest.TestCase):
         self.assertIn('importlib.import_module("sageattention")', onstart)
         self.assertIn("verify_torch_runtime_unchanged", onstart)
         self.assertIn("preserving previous stamp and refusing readiness", onstart)
+        self.assertIn(
+            'pip_install_with_fallback install --no-cache-dir -c "${torch_constraints}" -r "${requirements_file}"',
+            onstart,
+        )
+        self.assertIn(
+            '&&\n         verify_torch_runtime_unchanged "${torch_runtime_before}"',
+            onstart,
+        )
+        self.assertEqual(onstart.count('local torch_constraints=""'), 2)
+        self.assertIn('PIP_CONSTRAINT="${torch_constraints}" python3 "${install_script}"', onstart)
+        self.assertIn('PIP_CONSTRAINT="${torch_constraints}" bash "${install_script}"', onstart)
+        self.assertIn("Install script run had failures; preserving previous stamp and refusing readiness.", onstart)
 
 
 if __name__ == "__main__":
