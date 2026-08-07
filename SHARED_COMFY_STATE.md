@@ -1,38 +1,78 @@
 # Shared Comfy State Contract
 
-`COMFY_STATE_ROOT` is the provider-neutral Backblaze B2 root used by both Vast and Runpod.
+`COMFY_STATE_ROOT` is the provider-neutral Backblaze B2 root consumed by Vast and RunPod. It is an immutable-generation store, not a mutable directory mirror.
 
-## Required configuration
-
-Set the **same** value on both templates. The current canonical state is the established Vast root:
+## Layout and authority
 
 ```text
-COMFY_STATE_ROOT=myb2:comfy-bootstrap
+COMFY_STATE_ROOT/
+|- generations/
+|  `- <YYYYMMDDTHHMMSSZ-12hex>/
+|     |- workflows/
+|     |- settings/
+|     |- custom_nodes/
+|     |- custom_nodes_manifest.txt
+|     `- snapshot.manifest.json
+`- snapshot.complete.json
 ```
 
-Runpod needs a distinct B2 application key scoped to the existing `comfy-bootstrap` bucket; Vast can retain its existing bucket-scoped key. This preserves the existing Vast workflows/panel snapshot without a migration.
+A generation is authoritative only when `snapshot.complete.json` has the exact supported schema, names a valid generation ID, and carries the SHA-256 of that generation's valid manifest. Readers verify the manifest and every staged surface before transactional activation. Missing, malformed, partial, tampered, symlinked, or unexpected content leaves live state unchanged.
 
-## Shared state
+The completion marker is written last, only after remote object-set/content verification. Generation prefixes are never overwritten.
 
-- `workflows/` — saved ComfyUI workflows
-- `custom_nodes/` — source snapshot, excluding Git metadata, node_modules, and Python caches
-- `custom_nodes_manifest.txt` — canonical upstream repository list
-- `settings/` — ComfyUI user settings, Manager settings, and `extra_model_paths.yaml`
+## Shared surfaces
+
+- workflows
+- selected ComfyUI and Manager settings
+- custom-node source, excluding Git metadata, caches, `node_modules`, and MCP Panel
+- the verified generation's custom-node repository manifest
+
+The repository's curated required-node manifest remains the baseline. A verified generation manifest may add repositories. An unverified mutable B2 manifest is not authoritative.
 
 ## Deliberately not shared
 
+- MCP Panel (preserved locally and pinned by bootstrap)
 - model files, checkpoints, LoRAs, outputs, or input media
-- SSH keys and provider credentials
+- SSH keys, B2 credentials, Tailscale keys, Hermes bridge capability URLs, or provider credentials
 - Codex / ChatGPT authentication
 - provider-specific bootstrap code, runtime paths, or image configuration
 
-`CODEX_STATE_ROOT` remains provider-local by default even when `COMFY_STATE_ROOT` is shared.
+`CODEX_STATE_ROOT` is provider-local by default:
 
-## Restore and backup order
+```text
+myb2:comfy-provider-local/<provider>/codex-home
+```
 
-1. Bootstrap restores workflows and settings before ComfyUI starts.
-2. It restores the custom-node snapshot; if unavailable, it falls back to the manifest.
-3. It verifies node availability against restored workflows.
-4. The autosave snapshot uploads the same workflows, settings, node source, and regenerated manifest.
+Codex state is never included in shared generations. A designated writer may separately opt into provider-local Codex persistence with `ENABLE_CODEX_SNAPSHOT=1`.
 
-Only snapshot a fully healthy, idle ComfyUI instance. Avoid making state changes concurrently on Vast and Runpod: the most recent validated snapshot is authoritative.
+## Reader and writer roles
+
+All instances, including Vast, default to readers (`SNAPSHOT_WRITER=0` by absence). Readers restore verified generations and never autosave.
+
+Publication requires both:
+
+```text
+SNAPSHOT_WRITER=1
+SNAPSHOT_WRITER_ID=<unique stable writer identity>
+```
+
+Use one writer at a time. For a handoff, stop/revoke the old writer first, verify it no longer publishes, then authorize the new writer with a different identity. Templates/configuration must not enable publication by default.
+
+The writer checks live Comfy health and an idle queue before and after freezing, publishes to a unique generation prefix, verifies remote content, and updates the completion marker last. Interrupted or corrupt publication is invisible to readers.
+
+## Legacy migration
+
+The old mutable layout at `COMFY_STATE_ROOT/{workflows,settings,custom_nodes}` is disabled by default. Set `ALLOW_LEGACY_SNAPSHOT=1` only for an intentional one-time migration when no completed generation marker exists. Legacy custom nodes are downloaded into isolation and safely activated; unverified legacy manifests do not override the required repository baseline. Remove the flag after a valid generation is published.
+
+## Runtime acceptance
+
+Bootstrap requires a non-empty `wss://` `HERMES_PANEL_BRIDGE_URL`, advertises it to pinned MCP Panel, and verifies readback without logging the URL. The bridge is re-advertised after an idle restart.
+
+`WORKFLOW_VALIDATION_POLICY` defaults to `required`:
+
+- `/object_info` fetch/JSON failures are fatal.
+- malformed workflow JSON is fatal.
+- every class listed in `REQUIRED_RUNTIME_NODES` must exist in live `/object_info`.
+- other runtime-missing nodes are reported but remain optional under `required`; use `strict` to make all runtime-missing nodes fatal.
+
+The clean Vast base image does not carry the approved Torch stack. Bootstrap therefore establishes Torch `2.9.1+cu130`, torchvision `0.24.1+cu130`, torchaudio `2.9.1+cu130`, SageAttention `1.0.6`, CUDA identity `13.0`, and live GPU availability before reading B2 generation state. It then checks that exact identity around every mutable dependency hook and again before live node acceptance; any later drift is fatal.

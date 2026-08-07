@@ -22,8 +22,9 @@ class Sam2BootstrapTests(unittest.TestCase):
                 "[[ \"$1\" == - ]]\n"
                 "[[ \"$2\" == 2.9.1+cu130 ]]\n"
                 "[[ \"$3\" == 0.24.1+cu130 ]]\n"
-                "[[ \"$4\" == 13.0 ]]\n"
-                "[[ \"$5\" == 1.0.6 ]]\n"
+                "[[ \"$4\" == 2.9.1+cu130 ]]\n"
+                "[[ \"$5\" == 13.0 ]]\n"
+                "[[ \"$6\" == 1.0.6 ]]\n"
                 "cat >/dev/null\n",
                 encoding="utf-8",
             )
@@ -34,6 +35,7 @@ class Sam2BootstrapTests(unittest.TestCase):
                 "readonly RUNTIME_PYTHON\n"
                 "readonly APPROVED_TORCH_VERSION=2.9.1+cu130\n"
                 "readonly APPROVED_TORCHVISION_VERSION=0.24.1+cu130\n"
+                "readonly APPROVED_TORCHAUDIO_VERSION=2.9.1+cu130\n"
                 "readonly APPROVED_TORCH_CUDA_VERSION=13.0\n"
                 "readonly APPROVED_SAGEATTENTION_VERSION=1.0.6\n"
                 + function_body
@@ -48,6 +50,21 @@ class Sam2BootstrapTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stdout)
 
+    def test_fresh_vast_image_establishes_exact_runtime_before_preflight(self) -> None:
+        onstart = (REPO / "onstart.sh").read_text(encoding="utf-8")
+        self.assertIn("ensure_approved_torch_runtime", onstart)
+        self.assertIn("https://download.pytorch.org/whl/cu130", onstart)
+        self.assertIn('"torch==${APPROVED_TORCH_VERSION}"', onstart)
+        self.assertIn('"torchvision==${APPROVED_TORCHVISION_VERSION}"', onstart)
+        self.assertIn('"torchaudio==${APPROVED_TORCHAUDIO_VERSION}"', onstart)
+        self.assertIn('"sageattention==${APPROVED_SAGEATTENTION_VERSION}"', onstart)
+        ensure_call = onstart.index("  ensure_approved_torch_runtime\n", onstart.index("main() {"))
+        self.assertLess(ensure_call, onstart.index("  if [[ \"${TAILSCALE_PROOF_ONLY:-0}\" == \"1\" ]]", onstart.index("main() {")))
+        self.assertLess(ensure_call, onstart.index("  configure_rclone\n", onstart.index("main() {")))
+        ensure_body = onstart.split("ensure_approved_torch_runtime() {", 1)[1].split("\nwrite_torch_runtime_constraints() {", 1)[0]
+        self.assertGreaterEqual(ensure_body.count("verify_approved_torch_runtime"), 2)
+        self.assertIn("--no-deps", ensure_body)
+
     def test_sam2_reuses_existing_torch_without_build_isolation(self) -> None:
         onstart = (REPO / "onstart.sh").read_text(encoding="utf-8")
         self.assertIn("requirements_use_existing_torch_build_env", onstart)
@@ -56,13 +73,14 @@ class Sam2BootstrapTests(unittest.TestCase):
         self.assertIn("write_torch_runtime_constraints", onstart)
         self.assertIn('handle.write(f"torch=={torch.__version__}', onstart)
         self.assertIn('handle.write(f"torchvision==', onstart)
+        self.assertIn('handle.write(f"torchaudio==', onstart)
         self.assertIn("torch.cuda.is_available()", onstart)
         self.assertIn('importlib.import_module("sageattention")', onstart)
         self.assertIn("verify_torch_runtime_unchanged", onstart)
         self.assertIn("invalidated the stamp for retry", onstart)
         self.assertGreaterEqual(onstart.count('rm -f "${stamp_file}"'), 2)
         self.assertIn("Required workflow-node validation remains authoritative", onstart)
-        self.assertIn("required repo baseline only during legacy migration", onstart)
+        self.assertIn("required repo baseline only", onstart)
         self.assertNotIn("B2 catch-all manifests differ; using the union", onstart)
         self.assertIn(
             'pip_install_with_fallback install --no-cache-dir -c "${torch_constraints}" -r "${requirements_file}"',
@@ -81,6 +99,7 @@ class Sam2BootstrapTests(unittest.TestCase):
         self.assertIn("verify_approved_torch_runtime", onstart)
         self.assertIn('readonly APPROVED_TORCH_VERSION="2.9.1+cu130"', onstart)
         self.assertIn('readonly APPROVED_TORCHVISION_VERSION="0.24.1+cu130"', onstart)
+        self.assertIn('readonly APPROVED_TORCHAUDIO_VERSION="2.9.1+cu130"', onstart)
         self.assertIn('readonly APPROVED_TORCH_CUDA_VERSION="13.0"', onstart)
         self.assertIn('readonly APPROVED_SAGEATTENTION_VERSION="1.0.6"', onstart)
         self.assertLess(

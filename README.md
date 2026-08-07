@@ -1,45 +1,49 @@
 # ComfyUI Bootstrap for Vast.ai
 
-This repo bootstraps a fresh Vast.ai instance running the `vastai/comfy` image without reinstalling ComfyUI. It restores workflows from Backblaze B2, recreates `custom_nodes` from a manifest, installs each node's Python dependencies, and keeps the instance synced back to B2 with periodic snapshots.
+This repository bootstraps the existing ComfyUI installation in `vastai/comfy`, preserves the image's runtime and Tailscale behavior, and consumes shared state as verified **immutable generations**. Vast is a snapshot reader by default.
 
-It will auto-detect the ComfyUI install path on startup. If your image uses a custom location, you can also set `COMFY_ROOT` explicitly in Vast.
+## Safety model
 
-## What it does
+- `COMFY_STATE_ROOT` contains immutable `generations/<generation-id>/` trees and one authority pointer, `snapshot.complete.json`.
+- A generation is downloaded to an isolated stage, checked against its manifest, and activated transactionally. Malformed, partial, unexpected, or tampered content never replaces live state.
+- The old mutable root is ignored unless `ALLOW_LEGACY_SNAPSHOT=1` is explicitly set for a one-time migration.
+- Vast does not autosave unless both `SNAPSHOT_WRITER=1` and a unique `SNAPSHOT_WRITER_ID` are supplied. Do not authorize two providers/instances at once; stop the old writer before handing publication to a new one.
+- Codex state is provider-local by default at `myb2:comfy-provider-local/vast/codex-home`. Codex/provider credentials are not part of shared Comfy generations.
+- The MCP Panel is not mutable shared state. Bootstrap preserves and pins `comfyui-mcp-panel` at `b81b10dd86862fd26cc2177ab82152a73d3a0b1c` and disables Panel backend autospawn.
 
-- Restores workflows into the detected ComfyUI `user/default/workflows` directory
-- Merges the repo-local custom node baseline manifest with the B2 catch-all manifest
-- Clones missing custom node repos and fast-forwards existing ones from the merged manifest set
-- Installs ComfyUI and custom-node Python requirements only when the corresponding `requirements.txt` content changes
-- Installs the OpenAI Codex CLI so `codex` is available in the shell
-- Restores and snapshots only stable Codex auth/config files so ChatGPT login can persist without boot-time cache restores
-- Starts a background autosave loop that runs every 5 minutes and logs to `/workspace/autosave.log`
-- Provides a manual snapshot script you can run at any time
+## Required configuration
 
-## Required environment variables
-
-Set these on the Vast.ai instance before `onstart.sh` runs:
+Set before `onstart.sh` runs:
 
 - `B2_ACCOUNT_ID`
 - `B2_APP_KEY`
-- `COMFY_ROOT` (optional override if ComfyUI is not in a standard location)
-- `OPENAI_API_KEY` (optional, if you want Codex CLI ready for API-key auth)
-- `TAILSCALE_AUTH_KEY` (optional; configure as a temporary encrypted Vast **account** environment variable only for a bounded Tailnet proof)
-- `TAILSCALE_ENABLED=1` (optional; enables the private Tailnet Comfy proxy)
-- `TAILSCALE_PROVIDER=vast` (recommended when enabled)
+- `HERMES_PANEL_BRIDGE_URL` — required, non-empty `wss://` URL; bootstrap advertises it to Panel and verifies readback without logging its capability token
 
-The scripts use those values to configure the `myb2` rclone remote at runtime.
+Common optional configuration:
 
-If you want `codex` to work immediately in the shell, either export `OPENAI_API_KEY` on the instance or complete the Codex CLI login flow once after boot.
-After that first login, the bootstrap preserves `/root/.codex` by storing it in `/workspace/.codex` and syncing only these stable files to B2:
+- `COMFY_STATE_ROOT` (default `myb2:comfy-bootstrap`)
+- `CODEX_STATE_ROOT` (default provider-local Vast path above)
+- `COMFY_ROOT` (only for a nonstandard ComfyUI location)
+- `REQUIRED_RUNTIME_NODES` (comma/newline-separated node classes that must appear in live `/object_info`)
+- `WORKFLOW_VALIDATION_POLICY=required` (default; malformed workflow JSON, `/object_info` failure, and required-node absence are fatal; other runtime-missing nodes are reported but optional)
+- `ALLOW_LEGACY_SNAPSHOT=1` (temporary, explicit migration only)
+- `TAILSCALE_ENABLED=1`, `TAILSCALE_PROVIDER=vast`, and `TAILSCALE_AUTH_KEY` for private Tailnet ingress
 
-- `auth.json`
-- `config.toml`
-- `installation_id`
-- `version.json`
+The clean `vastai/comfy:v0.27.0-cuda-12.9-py312` base does not provide the approved Torch stack. Before B2 selection or any mutable state restore, bootstrap installs Torch `2.9.1+cu130`, torchvision `0.24.1+cu130`, torchaudio `2.9.1+cu130`, and SageAttention `1.0.6`, then immediately verifies CUDA `13.0` and GPU availability. All later dependency hooks remain constrained by that established identity and runtime drift is fatal. Existing Comfy reuse also requires the expected executable, Comfy root, configured port, and loopback listener.
 
-## Vast.ai on-start setup
+## Normal startup order
 
-Put this in Vast's **On-start Script** field:
+1. Discover the existing Vast ComfyUI path, establish and verify the exact approved CUDA 13 runtime, then configure bounded B2 access.
+2. Select the completed generation, verify it, and transactionally activate workflows/settings/custom nodes; otherwise retain the local baseline.
+3. Restore only an explicitly allowed legacy snapshot when migrating.
+4. Reconcile the verified generation manifest with the required repository baseline.
+5. Preserve/pin MCP Panel and ensure Manager v4.
+6. Start or safely reuse loopback ComfyUI, start private Tailscale ingress, advertise/read back the Hermes bridge.
+7. Run constrained requirements/install hooks, recheck the exact runtime, restart only while idle, and re-advertise the bridge.
+8. Validate live node acceptance under the required policy.
+9. Start autosave only on an explicitly authorized writer; readers log that autosave is disabled.
+
+## On-start setup
 
 ```bash
 #!/usr/bin/env bash
@@ -56,68 +60,38 @@ cd /workspace/comfy-bootstrap
 bash onstart.sh
 ```
 
-## Repo layout
+## Publishing a generation (designated writer only)
+
+Readers should not run `save_snapshot.sh`. During an explicit single-writer handoff:
+
+```bash
+export SNAPSHOT_WRITER=1
+export SNAPSHOT_WRITER_ID=vast-primary-unique-id
+cd /workspace/comfy-bootstrap
+bash save_snapshot.sh
+```
+
+The writer requires healthy, idle ComfyUI before and after freezing; excludes Git metadata, caches, `node_modules`, and MCP Panel; creates a unique immutable generation; refuses an existing prefix; verifies the complete remote object set/bytes; and writes `snapshot.complete.json` last. Provider-local Codex files are also skipped unless `ENABLE_CODEX_SNAPSHOT=1` is explicitly enabled.
+
+## Repository layout
 
 ```text
 comfy-bootstrap/
 |- onstart.sh
 |- save_snapshot.sh
+|- snapshot_contract.py
+|- snapshot_activate.py
+|- workflow_validation.py
 |- custom_nodes_manifest.txt
 |- generate_manifest.sh
-`- README.md
+|- SHARED_COMFY_STATE.md
+`- tests/
 ```
 
-## First-time bootstrap flow
-
-1. Add your must-have custom node Git repos to `custom_nodes_manifest.txt`, one URL per line.
-2. Upload your saved workflows to `myb2:comfy-bootstrap/workflows`, or let the repo start with an empty workflow directory.
-3. Launch the Vast.ai instance with `B2_ACCOUNT_ID` and `B2_APP_KEY` set.
-4. Let `onstart.sh` restore workflows, sync nodes, install requirements, and start autosave.
-
-## Manual snapshot
-
-Run this on the instance whenever you want an immediate backup:
+## Verification
 
 ```bash
-cd /workspace/comfy-bootstrap
-bash save_snapshot.sh
+bash -n onstart.sh save_snapshot.sh generate_manifest.sh lib/tailscale-private-comfy.sh
+python3 -m unittest discover -s tests -p 'test_*.py' -q
+python3 -m py_compile snapshot_contract.py snapshot_activate.py workflow_validation.py
 ```
-
-The snapshot script is safe to run repeatedly. It syncs:
-
-- Workflows
-- A small set of ComfyUI settings files when present
-- ComfyUI-Manager config from either `user/default/ComfyUI-Manager/config.ini` or `user/__manager/config.ini`
-- `custom_nodes`, excluding `.git`, `__pycache__`, `*.pyc`, and `node_modules`
-- A regenerated live custom node manifest to B2 so the catch-all node list stays current
-- Stable Codex files from `/workspace/.codex`: `auth.json`, `config.toml`, `installation_id`, and `version.json`
-
-## Updating workflows and nodes
-
-To update workflows:
-
-```bash
-cp /path/to/your/workflow.json /workspace/ComfyUI/user/default/workflows/
-bash /workspace/comfy-bootstrap/save_snapshot.sh
-```
-
-To update the manifest after adding or removing custom nodes directly on the machine:
-
-```bash
-cd /workspace/comfy-bootstrap
-bash generate_manifest.sh
-```
-
-If you want to refresh the B2 catch-all manifest manually, upload a generated manifest to B2:
-
-```bash
-rclone copyto /workspace/comfy-bootstrap/custom_nodes_manifest.txt myb2:comfy-bootstrap/custom_nodes_manifest.txt
-```
-
-## Notes
-
-- `onstart.sh` is idempotent and safe to run more than once.
-- `onstart.sh` detects ComfyUI by the configured port and will not try to start a second instance when one is already serving.
-- The autosave loop avoids launching duplicate background workers by tracking its PID.
-- The repo-local `custom_nodes_manifest.txt` is the curated baseline; the B2 manifest is the live catch-all set. Boot installs the union of both.
-- By default, Codex CLI is configured with `approval_policy = "never"` and `sandbox_mode = "danger-full-access"` in `/workspace/.codex/config.toml`. This is convenient on an isolated Vast instance, but it is intentionally permissive.

@@ -8,12 +8,18 @@ readonly DEFAULT_COMFY_ROOT="${COMFY_ROOT:-}"
 # custom nodes. Keep CODEX_STATE_ROOT provider-local: interactive credentials
 # must never be copied between GPU providers.
 readonly LEGACY_B2_ROOT="${B2_ROOT:-myb2:comfy-bootstrap}"
-readonly COMFY_STATE_ROOT="${COMFY_STATE_ROOT:-${LEGACY_B2_ROOT}}"
-readonly CODEX_STATE_ROOT="${CODEX_STATE_ROOT:-${LEGACY_B2_ROOT}/codex-home}"
-readonly REMOTE_CUSTOM_NODES="${COMFY_STATE_ROOT}/custom_nodes"
-readonly REMOTE_WORKFLOWS="${COMFY_STATE_ROOT}/workflows"
-readonly REMOTE_SETTINGS="${COMFY_STATE_ROOT}/settings"
-readonly REMOTE_CODEX_HOME="${CODEX_STATE_ROOT}"
+COMFY_STATE_ROOT_WAS_SET=0
+CODEX_STATE_ROOT_WAS_SET=0
+[[ -v COMFY_STATE_ROOT ]] && COMFY_STATE_ROOT_WAS_SET=1
+[[ -v CODEX_STATE_ROOT ]] && CODEX_STATE_ROOT_WAS_SET=1
+COMFY_STATE_ROOT="${COMFY_STATE_ROOT:-${LEGACY_B2_ROOT}}"
+readonly PROVIDER_NAME="${PROVIDER_NAME:-vast}"
+CODEX_STATE_ROOT="${CODEX_STATE_ROOT:-myb2:comfy-provider-local/${PROVIDER_NAME}/codex-home}"
+ACTIVE_STATE_ROOT=""
+REMOTE_CUSTOM_NODES=""
+REMOTE_WORKFLOWS=""
+REMOTE_SETTINGS=""
+REMOTE_CODEX_HOME=""
 readonly AUTOSAVE_LOG="${WORKSPACE_ROOT}/autosave.log"
 readonly AUTOSAVE_PIDFILE="${WORKSPACE_ROOT}/comfy-bootstrap-autosave.pid"
 readonly COMFY_LOG="${WORKSPACE_ROOT}/comfyui.log"
@@ -27,9 +33,11 @@ fi
 readonly RUNTIME_PYTHON
 readonly APPROVED_TORCH_VERSION="2.9.1+cu130"
 readonly APPROVED_TORCHVISION_VERSION="0.24.1+cu130"
+readonly APPROVED_TORCHAUDIO_VERSION="2.9.1+cu130"
 readonly APPROVED_TORCH_CUDA_VERSION="13.0"
 readonly APPROVED_SAGEATTENTION_VERSION="1.0.6"
-readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
 # shellcheck source=lib/tailscale-private-comfy.sh
 source "${SCRIPT_DIR}/lib/tailscale-private-comfy.sh"
 readonly CODEX_STABLE_FILES=(
@@ -44,9 +52,13 @@ BOOTSTRAP_ROOT=""
 CUSTOM_NODES_DIR=""
 WORKFLOWS_DIR=""
 MANIFEST_LOCAL=""
+MANIFEST_REMOTE_CACHE=""
 MANIFEST_ACTIVE=""
 STATE_DIR=""
 CUSTOM_NODES_SNAPSHOT_RESTORED=0
+SNAPSHOT_MODE="none"
+SELECTED_GENERATION_ID=""
+SELECTED_MANIFEST_SHA256=""
 
 log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
@@ -78,6 +90,7 @@ import importlib
 import importlib.metadata as metadata
 import json
 import torch
+import torchaudio
 import torchvision
 
 payload = {
@@ -85,6 +98,8 @@ payload = {
     "torch_path": torch.__file__,
     "torch_cuda": torch.version.cuda,
     "torch_cuda_available": torch.cuda.is_available(),
+    "torchaudio_version": torchaudio.__version__,
+    "torchaudio_path": torchaudio.__file__,
     "torchvision_version": torchvision.__version__,
     "torchvision_path": torchvision.__file__,
 }
@@ -109,23 +124,27 @@ verify_approved_torch_runtime() {
   "${RUNTIME_PYTHON}" - \
     "${APPROVED_TORCH_VERSION}" \
     "${APPROVED_TORCHVISION_VERSION}" \
+    "${APPROVED_TORCHAUDIO_VERSION}" \
     "${APPROVED_TORCH_CUDA_VERSION}" \
     "${APPROVED_SAGEATTENTION_VERSION}" <<'PY'
 import importlib
 import importlib.metadata as metadata
 import sys
 import torch
+import torchaudio
 import torchvision
 
 expected = {
     "torch": sys.argv[1],
     "torchvision": sys.argv[2],
-    "cuda": sys.argv[3],
-    "sageattention": sys.argv[4],
+    "torchaudio": sys.argv[3],
+    "cuda": sys.argv[4],
+    "sageattention": sys.argv[5],
 }
 actual = {
     "torch": torch.__version__,
     "torchvision": torchvision.__version__,
+    "torchaudio": torchaudio.__version__,
     "cuda": torch.version.cuda,
     "sageattention": metadata.version("sageattention"),
 }
@@ -135,6 +154,33 @@ if not torch.cuda.is_available():
 if actual != expected:
     raise SystemExit(f"approved runtime identity mismatch: expected={expected!r} actual={actual!r}")
 PY
+}
+
+ensure_approved_torch_runtime() {
+  if verify_approved_torch_runtime >/dev/null 2>&1; then
+    log "Approved Torch/torchvision/CUDA/SageAttention runtime already present."
+    return 0
+  fi
+
+  log "Installing the approved CUDA 13 Torch runtime for this fresh Vast image."
+  if ! pip_install_with_fallback install --no-cache-dir \
+      --index-url https://download.pytorch.org/whl/cu130 \
+      "torch==${APPROVED_TORCH_VERSION}" \
+      "torchvision==${APPROVED_TORCHVISION_VERSION}" \
+      "torchaudio==${APPROVED_TORCHAUDIO_VERSION}"; then
+    log "Failed installing the approved Torch/torchvision/torchaudio runtime."
+    return 1
+  fi
+  if ! pip_install_with_fallback install --no-cache-dir --no-deps \
+      "sageattention==${APPROVED_SAGEATTENTION_VERSION}"; then
+    log "Failed installing the approved SageAttention runtime without dependency mutation."
+    return 1
+  fi
+  if ! verify_approved_torch_runtime; then
+    log "Fresh-image runtime installation did not produce the exact approved identity."
+    return 1
+  fi
+  log "Approved CUDA 13 Torch runtime installed and verified."
 }
 
 write_torch_runtime_constraints() {
@@ -147,6 +193,7 @@ import torch
 with open(sys.argv[1], "w", encoding="utf-8") as handle:
     handle.write(f"torch=={torch.__version__}\n")
     handle.write(f"torchvision=={metadata.version('torchvision')}\n")
+    handle.write(f"torchaudio=={metadata.version('torchaudio')}\n")
 PY
 }
 
@@ -277,6 +324,7 @@ import importlib.metadata as metadata
 import json
 import sys
 import torch
+import torchaudio
 import torchvision
 
 print(json.dumps({
@@ -285,6 +333,7 @@ print(json.dumps({
     "python": sys.version,
     "torch": torch.__version__,
     "torchvision": torchvision.__version__,
+    "torchaudio": torchaudio.__version__,
     "cuda": torch.version.cuda,
     "sageattention": metadata.version("sageattention"),
 }, sort_keys=True))
@@ -415,6 +464,60 @@ configure_rclone() {
   log "Configured rclone remote 'myb2' from environment variables."
 }
 
+
+select_snapshot_generation() {
+  local marker_tmp manifest_tmp generation expected_sha actual_sha parsed_marker
+  local -a marker_fields=()
+  marker_tmp="$(mktemp)"
+  manifest_tmp="$(mktemp)"
+  if ! rclone_bounded 25 copyto "${COMFY_STATE_ROOT}/snapshot.complete.json" "${marker_tmp}"; then
+    rm -f "${marker_tmp}" "${manifest_tmp}"
+    if [[ "${ALLOW_LEGACY_SNAPSHOT:-0}" == "1" ]]; then
+      log "No completed generation marker; explicitly using legacy shared root for one-time migration."
+      ACTIVE_STATE_ROOT="${COMFY_STATE_ROOT}"
+      SNAPSHOT_MODE="legacy"
+    else
+      log "No valid completed snapshot generation; preserving immutable/repository baseline."
+      return 0
+    fi
+  else
+    if ! parsed_marker="$("${RUNTIME_PYTHON}" "${SCRIPT_DIR}/snapshot_contract.py" completion "${marker_tmp}")"; then
+      rm -f "${marker_tmp}" "${manifest_tmp}"
+      log "Snapshot completion marker is malformed; preserving immutable/repository baseline."
+      return 0
+    fi
+    mapfile -t marker_fields <<< "${parsed_marker}"
+    if (( ${#marker_fields[@]} != 2 )); then
+      rm -f "${marker_tmp}" "${manifest_tmp}"
+      log "Snapshot completion marker has invalid fields; preserving immutable/repository baseline."
+      return 0
+    fi
+    generation="${marker_fields[0]}"
+    expected_sha="${marker_fields[1]}"
+    if ! rclone_bounded 25 copyto "${COMFY_STATE_ROOT}/generations/${generation}/snapshot.manifest.json" "${manifest_tmp}"; then
+      rm -f "${marker_tmp}" "${manifest_tmp}"
+      log "Completed generation manifest is unavailable; preserving immutable/repository baseline."
+      return 0
+    fi
+    actual_sha="$(sha256sum "${manifest_tmp}" | awk '{print $1}')"
+    if [[ "${actual_sha}" != "${expected_sha}" ]] || ! "${RUNTIME_PYTHON}" "${SCRIPT_DIR}/snapshot_contract.py" manifest \
+      "${manifest_tmp}" "${generation}" "${expected_sha}"; then
+      rm -f "${marker_tmp}" "${manifest_tmp}"
+      log "Completed generation manifest failed integrity validation; preserving immutable/repository baseline."
+      return 0
+    fi
+    ACTIVE_STATE_ROOT="${COMFY_STATE_ROOT}/generations/${generation}"
+    SNAPSHOT_MODE="generation"
+    SELECTED_GENERATION_ID="${generation}"
+    SELECTED_MANIFEST_SHA256="${expected_sha}"
+    log "Selected completed snapshot generation ${generation}."
+  fi
+  REMOTE_CUSTOM_NODES="${ACTIVE_STATE_ROOT}/custom_nodes"
+  REMOTE_WORKFLOWS="${ACTIVE_STATE_ROOT}/workflows"
+  REMOTE_SETTINGS="${ACTIVE_STATE_ROOT}/settings"
+  rm -f "${marker_tmp}" "${manifest_tmp}"
+}
+
 is_comfy_root() {
   local candidate="$1"
   [[ -d "${candidate}" ]] || return 1
@@ -466,6 +569,7 @@ initialize_paths() {
   WORKFLOWS_DIR="${COMFY_ROOT}/user/default/workflows"
   STATE_DIR="${BOOTSTRAP_STATE_ROOT}"
   MANIFEST_LOCAL="${BOOTSTRAP_ROOT}/custom_nodes_manifest.txt"
+  MANIFEST_REMOTE_CACHE="${STATE_DIR}/custom_nodes_manifest.remote.txt"
   MANIFEST_ACTIVE="${STATE_DIR}/custom_nodes_manifest.merged.txt"
 }
 
@@ -478,9 +582,64 @@ ensure_directories() {
   log "Ensured ComfyUI directories exist."
 }
 
+rclone_bounded() {
+  local timeout_seconds="$1"
+  shift
+  timeout --signal=TERM --kill-after=10s "${timeout_seconds}s" rclone "$@" --contimeout 10s --timeout 25s --retries 1 --low-level-retries 1
+}
+
+
+restore_transactional_generation() {
+  local stage_root
+  local restore_timeout="${GENERATION_RESTORE_TIMEOUT_SECONDS:-600}"
+  [[ "${SNAPSHOT_MODE}" == "generation" ]] || return 0
+  if [[ ! "${restore_timeout}" =~ ^[0-9]+$ ]] || (( restore_timeout < 30 || restore_timeout > 900 )); then
+    log "Invalid GENERATION_RESTORE_TIMEOUT_SECONDS=${restore_timeout}; expected 30-900."
+    return 1
+  fi
+  stage_root="$(mktemp -d "${WORKSPACE_ROOT}/.snapshot-restore.${SELECTED_GENERATION_ID}.XXXXXX")"
+  log "Downloading completed generation into an isolated restore stage (timeout=${restore_timeout}s)."
+  if ! rclone_bounded "${restore_timeout}" sync "${ACTIVE_STATE_ROOT}" "${stage_root}" --create-empty-src-dirs; then
+    rm -rf "${stage_root}"
+    log "Generation download failed; immutable baseline was not modified."
+    SNAPSHOT_MODE="none"
+    ACTIVE_STATE_ROOT="${COMFY_STATE_ROOT}/unavailable"
+    REMOTE_CUSTOM_NODES="${ACTIVE_STATE_ROOT}/custom_nodes"
+    REMOTE_WORKFLOWS="${ACTIVE_STATE_ROOT}/workflows"
+    REMOTE_SETTINGS="${ACTIVE_STATE_ROOT}/settings"
+    return 0
+  fi
+  if ! "${RUNTIME_PYTHON}" "${SCRIPT_DIR}/snapshot_contract.py" manifest \
+      "${stage_root}/snapshot.manifest.json" "${SELECTED_GENERATION_ID}" "${SELECTED_MANIFEST_SHA256}" ||
+     ! "${RUNTIME_PYTHON}" "${SCRIPT_DIR}/snapshot_contract.py" verify-stage \
+      "${stage_root}" "${stage_root}/snapshot.manifest.json"; then
+    rm -rf "${stage_root}"
+    log "Generation content failed integrity validation; immutable baseline was not modified."
+    SNAPSHOT_MODE="none"
+    ACTIVE_STATE_ROOT="${COMFY_STATE_ROOT}/unavailable"
+    REMOTE_CUSTOM_NODES="${ACTIVE_STATE_ROOT}/custom_nodes"
+    REMOTE_WORKFLOWS="${ACTIVE_STATE_ROOT}/workflows"
+    REMOTE_SETTINGS="${ACTIVE_STATE_ROOT}/settings"
+    return 0
+  fi
+  if ! "${RUNTIME_PYTHON}" "${SCRIPT_DIR}/snapshot_activate.py" \
+      "${stage_root}" "${stage_root}/snapshot.manifest.json" "${COMFY_ROOT}"; then
+    rm -rf "${stage_root}"
+    log "Generation activation failed and was rolled back."
+    return 1
+  fi
+  if [[ -f "${stage_root}/custom_nodes_manifest.txt" ]]; then
+    install -m 0644 "${stage_root}/custom_nodes_manifest.txt" "${MANIFEST_REMOTE_CACHE}"
+  fi
+  rm -rf "${stage_root}"
+  CUSTOM_NODES_SNAPSHOT_RESTORED=1
+  log "Verified generation activated transactionally."
+}
+
+
 restore_workflows() {
-  log "Restoring workflows from Backblaze B2."
-  if rclone sync "${REMOTE_WORKFLOWS}" "${WORKFLOWS_DIR}" --create-empty-src-dirs; then
+  log "Restoring workflows from Backblaze B2 (bounded)."
+  if rclone_bounded 60 sync "${REMOTE_WORKFLOWS}" "${WORKFLOWS_DIR}" --create-empty-src-dirs; then
     log "Workflow restore complete."
   else
     log "Workflow restore skipped or failed; continuing with local state."
@@ -501,7 +660,7 @@ restore_settings() {
     remote_file="${REMOTE_SETTINGS}/${state_file%%:*}"
     local_file="${state_file#*:}"
     mkdir -p "$(dirname "${local_file}")"
-    if rclone copyto "${remote_file}" "${local_file}"; then
+    if rclone_bounded 35 copyto "${remote_file}" "${local_file}"; then
       log "Restored setting: ${state_file%%:*}"
     else
       log "Setting unavailable; preserving local/default value: ${state_file%%:*}"
@@ -511,21 +670,41 @@ restore_settings() {
 
 restore_custom_nodes_snapshot() {
   local restored_file_count=0
+  local restore_timeout="${CUSTOM_NODES_RESTORE_TIMEOUT_SECONDS:-600}"
+  local stage_root=""
+  if (( CUSTOM_NODES_SNAPSHOT_RESTORED )); then
+    log "Custom nodes already activated from a verified generation."
+    return 0
+  fi
+  if [[ ! "${restore_timeout}" =~ ^[0-9]+$ ]] || (( restore_timeout < 30 || restore_timeout > 900 )); then
+    log "Invalid CUSTOM_NODES_RESTORE_TIMEOUT_SECONDS=${restore_timeout}; expected 30-900."
+    return 1
+  fi
 
-  log "Attempting fast custom-node restore from Backblaze B2 snapshot."
-  if ! rclone sync "${REMOTE_CUSTOM_NODES}" "${CUSTOM_NODES_DIR}" --create-empty-src-dirs; then
-    log "Custom-node snapshot restore failed; falling back to manifest clones."
+  stage_root="$(mktemp -d "${WORKSPACE_ROOT}/.legacy-custom-nodes.XXXXXX")"
+  log "Downloading legacy custom-node snapshot into an isolated stage (timeout=${restore_timeout}s)."
+  if ! rclone_bounded "${restore_timeout}" sync "${REMOTE_CUSTOM_NODES}" "${stage_root}/custom_nodes" --create-empty-src-dirs; then
+    rm -rf "${stage_root}"
+    log "Custom-node snapshot restore failed without mutating the baked baseline; falling back to manifest clones."
     return
   fi
 
-  restored_file_count="$(find "${CUSTOM_NODES_DIR}" -type f | wc -l)"
+  restored_file_count="$(find "${stage_root}/custom_nodes" -type f | wc -l)"
   if (( restored_file_count == 0 )); then
+    rm -rf "${stage_root}"
     log "Custom-node snapshot was empty; falling back to manifest clones."
     return
   fi
 
+  if ! "${RUNTIME_PYTHON}" "${SCRIPT_DIR}/snapshot_activate.py" --legacy-custom-nodes \
+      "${stage_root}/custom_nodes" "${COMFY_ROOT}"; then
+    rm -rf "${stage_root}"
+    log "Legacy custom-node candidate failed safe activation; preserving the baked baseline."
+    return 1
+  fi
+  rm -rf "${stage_root}"
   CUSTOM_NODES_SNAPSHOT_RESTORED=1
-  log "Custom-node snapshot restore complete: ${restored_file_count} files."
+  log "Activated complete legacy custom-node snapshot (${restored_file_count} files) transactionally."
 }
 
 count_manifest_repos() {
@@ -561,9 +740,16 @@ fetch_manifest() {
   normalize_manifest_file "${MANIFEST_LOCAL}" "${normalized_local}" "repo baseline"
   local_count="$(wc -l < "${normalized_local}")"
 
-  : > "${normalized_remote}"
-  remote_count=0
-  log "Using the required repo baseline only during legacy migration. Optional legacy repos remain available for Manager/workflow re-download."
+  if (( CUSTOM_NODES_SNAPSHOT_RESTORED )) && [[ -f "${MANIFEST_REMOTE_CACHE}" ]]; then
+    install -m 0644 "${MANIFEST_REMOTE_CACHE}" "${tmp_remote}"
+    normalize_manifest_file "${tmp_remote}" "${normalized_remote}" "verified generation"
+    remote_count="$(wc -l < "${normalized_remote}")"
+    log "Using the custom-node manifest retained from the verified generation."
+  else
+    : > "${normalized_remote}"
+    remote_count=0
+    log "No verified generation manifest is active; using the required repo baseline only. Optional legacy repos remain available for Manager/workflow re-download."
+  fi
 
   cat "${normalized_local}" "${normalized_remote}" | sed '/^$/d' | sort -u > "${merged_tmp}"
   install -m 0644 "${merged_tmp}" "${MANIFEST_ACTIVE}"
@@ -599,6 +785,11 @@ normalize_manifest_file() {
 
     [[ -z "${trimmed}" ]] && continue
     [[ "${trimmed}" == \#* ]] && continue
+
+    if [[ "${trimmed,,}" == *"github.com/comfy-org/comfyui-manager"* ]]; then
+      log "Ignoring legacy Manager v3 manifest entry; Manager v4 is pip-pinned."
+      continue
+    fi
 
     if [[ "${trimmed}" =~ ^https?://[^[:space:]]+$ || "${trimmed}" =~ ^git@github\.com:[^[:space:]]+$ ]]; then
       printf '%s\n' "${trimmed}" >> "${output_file}"
@@ -944,6 +1135,14 @@ install_comfy_requirements() {
 }
 
 start_autosave_loop() {
+  if [[ "${SNAPSHOT_WRITER:-0}" != "1" ]]; then
+    log "Autosave disabled: this instance is not the designated snapshot writer."
+    return 0
+  fi
+  if [[ -z "${SNAPSHOT_WRITER_ID:-}" ]]; then
+    log "Autosave refused: designated writers require SNAPSHOT_WRITER_ID."
+    return 1
+  fi
   mkdir -p "$(dirname "${AUTOSAVE_LOG}")"
   touch "${AUTOSAVE_LOG}"
 
@@ -958,12 +1157,12 @@ start_autosave_loop() {
 
   log "Starting autosave loop."
   (
-    export COMFY_ROOT WORKSPACE_ROOT
+    export COMFY_ROOT WORKSPACE_ROOT COMFY_STATE_ROOT CODEX_STATE_ROOT PROVIDER_NAME SNAPSHOT_WRITER SNAPSHOT_WRITER_ID
     while true; do
-      bash "${BOOTSTRAP_ROOT}/save_snapshot.sh" >>"${AUTOSAVE_LOG}" 2>&1 || true
+      bash "${BOOTSTRAP_ROOT}/save_snapshot.sh" || true
       sleep 300
     done
-  ) &
+  ) </dev/null >>"${AUTOSAVE_LOG}" 2>&1 &
   local autosave_pid=$!
   echo "${autosave_pid}" > "${AUTOSAVE_PIDFILE}"
   log "Autosave loop running with PID ${autosave_pid}."
@@ -1001,6 +1200,12 @@ list_listening_pids_for_port() {
   ss -ltnp 2>/dev/null | awk -v port="${port}" '$4 ~ ":" port "$"' | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' | sort -u
 }
 
+
+list_loopback_listening_pids_for_port() {
+  local port="$1"
+
+  ss -ltnp 2>/dev/null | awk -v port="${port}" '$4 == "127.0.0.1:" port || $4 == "[::1]:" port' | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' | sort -u
+}
 pid_matches_comfy_root() {
   local pid="$1"
   local cmdline=""
@@ -1033,7 +1238,7 @@ find_comfy_listener_pid_for_port() {
       printf '%s\n' "${pid}"
       return
     fi
-  done < <(list_listening_pids_for_port "${port}")
+  done < <(list_loopback_listening_pids_for_port "${port}")
 }
 
 list_comfy_root_pids() {
@@ -1063,6 +1268,44 @@ wait_for_comfy_listener() {
     attempts=$((attempts - 1))
   done
 }
+
+ensure_mcp_panel_pinned() {
+  local panel_repo="${MCP_PANEL_REPOSITORY:-https://github.com/artokun/comfyui-mcp-panel.git}"
+  local panel_commit="${MCP_PANEL_COMMIT:-b81b10dd86862fd26cc2177ab82152a73d3a0b1c}"
+  local panel_dir="${CUSTOM_NODES_DIR}/comfyui-mcp-panel"
+  local archive_dir=""
+  archive_dir="${BOOTSTRAP_STATE_ROOT}/disabled-custom-nodes/comfyui-mcp-panel-$(date -u '+%Y%m%dT%H%M%SZ')"
+  local current_origin="" current_commit=""
+
+  if [[ -d "${panel_dir}/.git" ]]; then
+    current_origin="$(git -C "${panel_dir}" remote get-url origin 2>/dev/null || true)"
+    current_commit="$(git -C "${panel_dir}" rev-parse HEAD 2>/dev/null || true)"
+    if [[ "${current_origin}" == "${panel_repo}" && "${current_commit}" == "${panel_commit}" ]] &&
+       [[ -f "${panel_dir}/__init__.py" && -f "${panel_dir}/web/js/comfyui-mcp-panel.js" ]] &&
+       grep -Fq 'advertise_bridge' "${panel_dir}/__init__.py" &&
+       grep -Fq 'bridge_url' "${panel_dir}/__init__.py"; then
+      log "Pinned MCP Panel already present and source markers verified at ${panel_commit}."
+      return 0
+    fi
+  fi
+
+  if [[ -e "${panel_dir}" ]]; then
+    mkdir -p "$(dirname "${archive_dir}")"
+    mv "${panel_dir}" "${archive_dir}"
+    log "Archived non-canonical MCP Panel outside custom_nodes."
+  fi
+  log "Installing pinned MCP Panel commit ${panel_commit}."
+  git clone --filter=blob:none --no-checkout "${panel_repo}" "${panel_dir}"
+  git -C "${panel_dir}" fetch --depth 1 origin "${panel_commit}"
+  git -C "${panel_dir}" checkout --detach "${panel_commit}"
+  if ! { [[ -f "${panel_dir}/__init__.py" && -f "${panel_dir}/web/js/comfyui-mcp-panel.js" ]] &&
+    grep -Fq 'advertise_bridge' "${panel_dir}/__init__.py" &&
+    grep -Fq 'bridge_url' "${panel_dir}/__init__.py"; }; then
+    log "Pinned MCP Panel source markers are missing."
+    return 1
+  fi
+}
+
 
 ensure_comfyui_manager_v4() {
   local manager_package="comfyui-manager==4.2.2"
@@ -1102,7 +1345,7 @@ ensure_comfyui_manager_v4() {
 }
 
 ensure_comfy_running() {
-  local comfy_args_raw="${COMFYUI_ARGS:---listen 0.0.0.0 --port ${DEFAULT_COMFY_PORT}}"
+  local comfy_args_raw="${COMFYUI_ARGS:---listen 127.0.0.1 --port ${DEFAULT_COMFY_PORT}}"
   local -a comfy_args=()
   local has_listen=0
   local configured_port=""
@@ -1148,6 +1391,7 @@ ensure_comfy_running() {
   # Shared with the sourced private Tailscale helper so Serve always points at
   # the actual loopback ComfyUI listener, even when a template changes its port.
   COMFYUI_ACTIVE_PORT="${configured_port}"
+  export COMFYUI_ACTIVE_PORT
   listener_pid="$(find_comfy_listener_pid_for_port "${configured_port}" || true)"
   if [[ -n "${listener_pid}" ]]; then
     log "ComfyUI already serving port ${configured_port} with PID ${listener_pid}."
@@ -1173,6 +1417,7 @@ ensure_comfy_running() {
     exit 1
   fi
 
+  export COMFYUI_MCP_NO_AUTOSPAWN=1
   log "Starting ComfyUI with args: ${comfy_args[*]}"
   launch_pid="$(
     cd "${COMFY_ROOT}"
@@ -1197,114 +1442,133 @@ ensure_comfy_running() {
   exit 1
 }
 
+restart_comfy_if_idle() {
+  local port="${COMFYUI_ACTIVE_PORT:-${DEFAULT_COMFY_PORT}}"
+  local listener_pid=""
+  listener_pid="$(find_comfy_listener_pid_for_port "${port}" || true)"
+  if [[ -z "${listener_pid}" ]]; then
+    ensure_comfy_running
+    return 0
+  fi
+  if ! curl -fsS --max-time 10 "http://127.0.0.1:${port}/queue" | "${RUNTIME_PYTHON}" -c '
+import json,sys
+q=json.load(sys.stdin)
+raise SystemExit(0 if not q.get("queue_running") and not q.get("queue_pending") else 1)
+'; then
+    log "ComfyUI queue is not idle; deferring state-reload restart."
+    return 2
+  fi
+  log "Restarting idle ComfyUI PID ${listener_pid} to load restored integrations."
+  kill -TERM "${listener_pid}"
+  local attempts=30
+  while kill -0 "${listener_pid}" 2>/dev/null && (( attempts > 0 )); do
+    sleep 1
+    attempts=$((attempts - 1))
+  done
+  if kill -0 "${listener_pid}" 2>/dev/null; then
+    log "ComfyUI did not stop gracefully; refusing forced termination."
+    return 1
+  fi
+  ensure_comfy_running
+}
+
+
+advertise_hermes_bridge() {
+  local bridge_url="${HERMES_PANEL_BRIDGE_URL:-}"
+  local port="${COMFYUI_ACTIVE_PORT:-${DEFAULT_COMFY_PORT}}"
+  [[ -n "${bridge_url}" ]] || {
+    log "HERMES_PANEL_BRIDGE_URL is required for MCP Panel/Hermes control readiness."
+    return 1
+  }
+  [[ "${bridge_url}" == wss://* ]] || {
+    log "Refusing non-WSS Hermes panel bridge URL."
+    return 1
+  }
+  if ! HERMES_PANEL_BRIDGE_URL="${bridge_url}" "${RUNTIME_PYTHON}" -c 'import json,os; print(json.dumps({"url":os.environ["HERMES_PANEL_BRIDGE_URL"]}))' |
+      curl -fsS --max-time 10 -H 'content-type: application/json' --data-binary @- \
+        "http://127.0.0.1:${port}/comfyui_mcp_panel/advertise_bridge" >/dev/null; then
+    log "Failed to advertise the private Hermes bridge to MCP Panel."
+    return 1
+  fi
+  if ! HERMES_PANEL_BRIDGE_URL="${bridge_url}" curl -fsS --max-time 10 \
+      "http://127.0.0.1:${port}/comfyui_mcp_panel/bridge_url" |
+      "${RUNTIME_PYTHON}" -c 'import json,os,sys; assert json.load(sys.stdin).get("url")==os.environ["HERMES_PANEL_BRIDGE_URL"]'; then
+    log "MCP Panel did not retain the advertised Hermes bridge URL."
+    return 1
+  fi
+  log "Private WSS Hermes bridge advertised and verified without logging its capability token."
+}
+
+
 validate_workflow_nodes_available() {
-  local comfy_args_raw="${COMFYUI_ARGS:---listen 0.0.0.0 --port ${DEFAULT_COMFY_PORT}}"
+  local comfy_args_raw="${COMFYUI_ARGS:---listen 127.0.0.1 --port ${DEFAULT_COMFY_PORT}}"
   local -a comfy_args=()
   local configured_port=""
+  local policy="${WORKFLOW_VALIDATION_POLICY:-required}"
 
   read -r -a comfy_args <<< "${comfy_args_raw}"
   configured_port="$(get_comfy_port_from_args "${DEFAULT_COMFY_PORT}" "${comfy_args[@]}")"
+  case "${policy}" in
+    report|required|strict) ;;
+    *)
+      log "Invalid WORKFLOW_VALIDATION_POLICY=${policy}; expected report, required, or strict."
+      return 1
+      ;;
+  esac
 
-  log "Validating workflow node classes against live ComfyUI object_info."
-  "${RUNTIME_PYTHON}" - "${WORKFLOWS_DIR}" "${configured_port}" <<'PY'
-import glob
-import json
-import re
-import sys
-import urllib.request
-
-workflows_dir = sys.argv[1]
-port = sys.argv[2]
-frontend_known = {
-    "Fast Bypasser (rgthree)",
-    "GetNode",
-    "MarkdownNote",
-    "Mute / Bypass Repeater (rgthree)",
-    "Note",
-    "Reroute",
-    "SetNode",
-}
-
-def iter_types(obj):
-    if isinstance(obj, dict):
-        node_type = obj.get("class_type") or obj.get("type")
-        if isinstance(node_type, str):
-            yield node_type
-        for value in obj.values():
-            yield from iter_types(value)
-    elif isinstance(obj, list):
-        for item in obj:
-            yield from iter_types(item)
-
-used = set()
-for workflow_file in glob.glob(f"{workflows_dir}/*.json"):
-    try:
-        with open(workflow_file, "r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-    except Exception:
-        continue
-    used.update(iter_types(payload))
-
-try:
-    with urllib.request.urlopen(f"http://127.0.0.1:{port}/object_info", timeout=10) as response:
-        object_info = json.load(response)
-except Exception as exc:
-    print(f"VALIDATION_ERROR unable to fetch object_info: {exc}")
-    sys.exit(0)
-
-available = set(object_info.keys())
-missing = sorted(node for node in used if node not in available)
-uuid_like = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
-
-frontend_missing = []
-runtime_missing = []
-for node in missing:
-    if node in frontend_known or uuid_like.match(node):
-        frontend_missing.append(node)
-    else:
-        runtime_missing.append(node)
-
-print(f"VALIDATION_SUMMARY workflows={len(glob.glob(f'{workflows_dir}/*.json'))} used={len(used)} available={len(available)} runtime_missing={len(runtime_missing)} frontend_missing={len(frontend_missing)}")
-for node in runtime_missing:
-    print(f"VALIDATION_RUNTIME_MISSING {node}")
-for node in frontend_missing:
-    print(f"VALIDATION_FRONTEND_MISSING {node}")
-PY
+  log "Validating workflow node classes against live ComfyUI object_info (policy=${policy})."
+  "${RUNTIME_PYTHON}" "${SCRIPT_DIR}/workflow_validation.py" \
+    "${WORKFLOWS_DIR}" "${configured_port}" \
+    --policy "${policy}" \
+    --required "${REQUIRED_RUNTIME_NODES:-}" \
+    --report "${WORKSPACE_ROOT}/workflow-node-validation.json"
 }
 
 hydrate_runtime_env_allowlist() {
-  # Vast's /root/onstart.sh launcher can drop account-level environment values
-  # when it forks the user onstart script, while PID 1 still holds them. Restore
-  # only the explicit bootstrap-secret/config allowlist; never dump or log env.
-  [[ -r /proc/1/environ ]] || return 0
+  # Vast can retain account-level configuration only in PID 1 when it forks the
+  # user onstart script. Import only named bootstrap values and never print the
+  # source environment or any imported value.
+  local environ_path="/proc/1/environ"
+  [[ -r "${environ_path}" ]] || return 0
   local item name
   while IFS= read -r -d '' item; do
     name="${item%%=*}"
     case "${name}" in
-      B2_ACCOUNT_ID|B2_APP_KEY|B2_BUCKET|B2_ENDPOINT|TAILSCALE_AUTH_KEY|TAILSCALE_ENABLED|TAILSCALE_PROVIDER|TAILSCALE_COMFY_PORT|TAILSCALE_STATE|TAILSCALE_VAR_ROOT)
-        [[ -v "${name}" ]] || export "${item}"
+      COMFY_STATE_ROOT)
+        (( COMFY_STATE_ROOT_WAS_SET == 1 )) || COMFY_STATE_ROOT="${item#*=}"
+        ;;
+      CODEX_STATE_ROOT)
+        (( CODEX_STATE_ROOT_WAS_SET == 1 )) || CODEX_STATE_ROOT="${item#*=}"
+        ;;
+      B2_ACCOUNT_ID|B2_APP_KEY|B2_BUCKET|B2_ENDPOINT|TAILSCALE_AUTH_KEY|TAILSCALE_ENABLED|TAILSCALE_PROVIDER|TAILSCALE_COMFY_PORT|TAILSCALE_STATE|TAILSCALE_VAR_ROOT|HERMES_PANEL_BRIDGE_URL|ALLOW_LEGACY_SNAPSHOT|REQUIRED_RUNTIME_NODES|WORKFLOW_VALIDATION_POLICY|TAILSCALE_PROOF_ONLY|SNAPSHOT_WRITER|SNAPSHOT_WRITER_ID)
+        [[ -v "${name}" ]] || export "${name}=${item#*=}"
         ;;
     esac
-  done < /proc/1/environ
+  done < "${environ_path}"
+}
+
+finalize_runtime_state_roots() {
+  ACTIVE_STATE_ROOT="${COMFY_STATE_ROOT}/unavailable"
+  REMOTE_CUSTOM_NODES="${ACTIVE_STATE_ROOT}/custom_nodes"
+  REMOTE_WORKFLOWS="${ACTIVE_STATE_ROOT}/workflows"
+  REMOTE_SETTINGS="${ACTIVE_STATE_ROOT}/settings"
+  REMOTE_CODEX_HOME="${CODEX_STATE_ROOT}"
+  readonly COMFY_STATE_ROOT CODEX_STATE_ROOT REMOTE_CODEX_HOME
 }
 
 main() {
   hydrate_runtime_env_allowlist
+  finalize_runtime_state_roots
   log "Bootstrap starting."
   wait_for_workspace
   install_packages_if_missing
   discover_comfy_root
   initialize_paths
+  ensure_approved_torch_runtime
 
-  # A bounded Tailnet ingress proof deliberately avoids B2 restores, snapshots,
-  # node changes, model downloads, and Codex setup.  It is only safe when an
-  # existing Comfy image is already present; fail closed if Comfy or Tailscale
-  # cannot be made healthy.
   if [[ "${TAILSCALE_PROOF_ONLY:-0}" == "1" ]]; then
     log "Running bounded Tailnet proof only; skipping B2-dependent state/bootstrap work."
     ensure_directories
-    # Core Comfy requirements are required to prove the app; they do not restore
-    # state, download models, or install optional nodes.
     install_comfy_requirements
     ensure_comfy_running
     start_private_tailscale_comfy
@@ -1313,36 +1577,50 @@ main() {
   fi
 
   configure_rclone
+  select_snapshot_generation
   ensure_directories
-  restore_workflows
-  restore_settings
+  case "${SNAPSHOT_MODE}" in
+    generation)
+      restore_transactional_generation
+      ;;
+    legacy)
+      restore_workflows
+      restore_settings
+      ;;
+    none)
+      log "No restorable snapshot selected; retaining immutable/repository baseline."
+      ;;
+  esac
 
-  # The paid-instance acceptance gate comes first: a usable Comfy/PyTorch
-  # runtime must not wait behind Codex or dozens of optional node clones.
   install_comfy_requirements
-  # The shared Agent Panel is a frontend extension; Node.js 22 is a runtime
-  # requirement independent of optional remote Codex authentication.
   ensure_node_22
   restore_custom_nodes_snapshot
   fetch_manifest
   sync_custom_nodes
+  ensure_mcp_panel_pinned
+  ensure_comfyui_manager_v4
+  restart_comfy_if_idle
+  start_private_tailscale_comfy
+  advertise_hermes_bridge
+
   install_node_requirements
   run_custom_node_install_scripts
   verify_approved_torch_runtime || {
     log "Final approved Torch/torchvision/CUDA/SageAttention gate failed after all custom-node dependency hooks."
     return 1
   }
-  ensure_comfyui_manager_v4
-  ensure_comfy_running
-  start_private_tailscale_comfy
+  if restart_comfy_if_idle; then
+    advertise_hermes_bridge
+  else
+    log "Full custom-node reload was deferred; refusing readiness until the live registry can be validated."
+    return 1
+  fi
   validate_workflow_nodes_available
 
-  # Nice-to-have tooling is deliberately post-readiness.
   restore_codex_home
   configure_codex_defaults
   install_codex_cli
   start_autosave_loop
   log "Bootstrap complete."
 }
-
 main "$@"
