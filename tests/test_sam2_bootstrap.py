@@ -62,6 +62,8 @@ class Sam2BootstrapTests(unittest.TestCase):
         self.assertIn("invalidated the stamp for retry", onstart)
         self.assertGreaterEqual(onstart.count('rm -f "${stamp_file}"'), 2)
         self.assertIn("Required workflow-node validation remains authoritative", onstart)
+        self.assertIn("required repo baseline only during legacy migration", onstart)
+        self.assertNotIn("B2 catch-all manifests differ; using the union", onstart)
         self.assertIn(
             'pip_install_with_fallback install --no-cache-dir -c "${torch_constraints}" -r "${requirements_file}"',
             onstart,

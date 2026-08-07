@@ -10,7 +10,6 @@ readonly DEFAULT_COMFY_ROOT="${COMFY_ROOT:-}"
 readonly LEGACY_B2_ROOT="${B2_ROOT:-myb2:comfy-bootstrap}"
 readonly COMFY_STATE_ROOT="${COMFY_STATE_ROOT:-${LEGACY_B2_ROOT}}"
 readonly CODEX_STATE_ROOT="${CODEX_STATE_ROOT:-${LEGACY_B2_ROOT}/codex-home}"
-readonly MANIFEST_REMOTE="${COMFY_STATE_ROOT}/custom_nodes_manifest.txt"
 readonly REMOTE_CUSTOM_NODES="${COMFY_STATE_ROOT}/custom_nodes"
 readonly REMOTE_WORKFLOWS="${COMFY_STATE_ROOT}/workflows"
 readonly REMOTE_SETTINGS="${COMFY_STATE_ROOT}/settings"
@@ -45,7 +44,6 @@ BOOTSTRAP_ROOT=""
 CUSTOM_NODES_DIR=""
 WORKFLOWS_DIR=""
 MANIFEST_LOCAL=""
-MANIFEST_REMOTE_CACHE=""
 MANIFEST_ACTIVE=""
 STATE_DIR=""
 CUSTOM_NODES_SNAPSHOT_RESTORED=0
@@ -468,7 +466,6 @@ initialize_paths() {
   WORKFLOWS_DIR="${COMFY_ROOT}/user/default/workflows"
   STATE_DIR="${BOOTSTRAP_STATE_ROOT}"
   MANIFEST_LOCAL="${BOOTSTRAP_ROOT}/custom_nodes_manifest.txt"
-  MANIFEST_REMOTE_CACHE="${STATE_DIR}/custom_nodes_manifest.remote.txt"
   MANIFEST_ACTIVE="${STATE_DIR}/custom_nodes_manifest.merged.txt"
 }
 
@@ -564,19 +561,9 @@ fetch_manifest() {
   normalize_manifest_file "${MANIFEST_LOCAL}" "${normalized_local}" "repo baseline"
   local_count="$(wc -l < "${normalized_local}")"
 
-  log "Attempting to download custom node manifest from B2."
-  if rclone copyto "${MANIFEST_REMOTE}" "${tmp_remote}"; then
-    normalize_manifest_file "${tmp_remote}" "${normalized_remote}" "B2 catch-all"
-    remote_count="$(wc -l < "${normalized_remote}")"
-    install -m 0644 "${normalized_remote}" "${MANIFEST_REMOTE_CACHE}"
-    if ! cmp -s "${normalized_local}" "${normalized_remote}" 2>/dev/null; then
-      log "Repo baseline and B2 catch-all manifests differ; using the union of both."
-    fi
-  else
-    : > "${normalized_remote}"
-    remote_count=0
-    log "B2 manifest unavailable; continuing with repo baseline only."
-  fi
+  : > "${normalized_remote}"
+  remote_count=0
+  log "Using the required repo baseline only during legacy migration. Optional legacy repos remain available for Manager/workflow re-download."
 
   cat "${normalized_local}" "${normalized_remote}" | sed '/^$/d' | sort -u > "${merged_tmp}"
   install -m 0644 "${merged_tmp}" "${MANIFEST_ACTIVE}"
