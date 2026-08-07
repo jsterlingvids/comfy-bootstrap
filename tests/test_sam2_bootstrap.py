@@ -59,7 +59,9 @@ class Sam2BootstrapTests(unittest.TestCase):
         self.assertIn("torch.cuda.is_available()", onstart)
         self.assertIn('importlib.import_module("sageattention")', onstart)
         self.assertIn("verify_torch_runtime_unchanged", onstart)
-        self.assertIn("preserving previous stamp and refusing readiness", onstart)
+        self.assertIn("invalidated the stamp for retry", onstart)
+        self.assertGreaterEqual(onstart.count('rm -f "${stamp_file}"'), 2)
+        self.assertIn("Required workflow-node validation remains authoritative", onstart)
         self.assertIn(
             'pip_install_with_fallback install --no-cache-dir -c "${torch_constraints}" -r "${requirements_file}"',
             onstart,
@@ -72,7 +74,8 @@ class Sam2BootstrapTests(unittest.TestCase):
         self.assertEqual(onstart.count('local torch_constraints=""'), 4)
         self.assertIn('PYTHON="${RUNTIME_PYTHON}" PIP_CONSTRAINT="${torch_constraints}" "${RUNTIME_PYTHON}" "${install_script}"', onstart)
         self.assertIn('PYTHON="${RUNTIME_PYTHON}" PIP_CONSTRAINT="${torch_constraints}" bash "${install_script}"', onstart)
-        self.assertIn("Install script run had failures; preserving previous stamp and refusing readiness.", onstart)
+        self.assertIn("optional custom-node install scripts had failures", onstart)
+        self.assertIn("Approved runtime identity drifted during custom-node install scripts; refusing readiness.", onstart)
         self.assertIn("verify_approved_torch_runtime", onstart)
         self.assertIn('readonly APPROVED_TORCH_VERSION="2.9.1+cu130"', onstart)
         self.assertIn('readonly APPROVED_TORCHVISION_VERSION="0.24.1+cu130"', onstart)

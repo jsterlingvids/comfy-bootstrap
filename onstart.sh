@@ -824,7 +824,11 @@ install_node_requirements() {
     current_fingerprint="$(compute_node_requirements_fingerprint | sha256sum | awk '{print $1}')"
     write_stamp "${stamp_file}" "${current_fingerprint}"
   else
-    log "Requirements install had failures; preserving previous stamp and refusing readiness."
+    rm -f "${stamp_file}"
+    log "WARNING: optional custom-node requirements had failures; invalidated the stamp for retry. Required workflow-node validation remains authoritative."
+  fi
+  if ! verify_approved_torch_runtime; then
+    log "Approved runtime identity drifted during custom-node requirements; refusing readiness."
     return 1
   fi
 }
@@ -900,7 +904,11 @@ run_custom_node_install_scripts() {
     # must observe that drift and rerun the affected phase.
     write_stamp "${stamp_file}" "${current_fingerprint}"
   else
-    log "Install script run had failures; preserving previous stamp and refusing readiness."
+    rm -f "${stamp_file}"
+    log "WARNING: optional custom-node install scripts had failures; invalidated the stamp for retry. Required workflow-node validation remains authoritative."
+  fi
+  if ! verify_approved_torch_runtime; then
+    log "Approved runtime identity drifted during custom-node install scripts; refusing readiness."
     return 1
   fi
 }
