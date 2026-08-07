@@ -9,6 +9,10 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 class Sam2BootstrapTests(unittest.TestCase):
+    def test_required_video_combine_source_is_in_baseline_manifest(self) -> None:
+        manifest = (REPO / "custom_nodes_manifest.txt").read_text(encoding="utf-8")
+        self.assertIn("Kosinkadink/ComfyUI-VideoHelperSuite", manifest)
+
     def test_verify_approved_runtime_does_not_reassign_readonly_constants(self) -> None:
         onstart = (REPO / "onstart.sh").read_text(encoding="utf-8")
         function_body = "verify_approved_torch_runtime() {" + onstart.split(
