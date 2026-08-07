@@ -52,8 +52,14 @@ start_private_tailscale_comfy() {
   local hostname
   hostname="$(_tailscale_hostname)"
   [[ -n "${hostname}" ]] || { log "Could not derive a safe Tailscale hostname."; return 1; }
-  [[ "${port}" =~ ^[0-9]+$ ]] && (( port >= 1024 && port <= 65535 )) || { log "Invalid Tailscale Comfy port."; return 1; }
-  [[ "${target_port}" =~ ^[0-9]+$ ]] && (( target_port >= 1 && target_port <= 65535 )) || { log "Invalid loopback ComfyUI target port."; return 1; }
+  if [[ ! "${port}" =~ ^[0-9]+$ ]] || (( port < 1024 || port > 65535 )); then
+    log "Invalid Tailscale Comfy port."
+    return 1
+  fi
+  if [[ ! "${target_port}" =~ ^[0-9]+$ ]] || (( target_port < 1 || target_port > 65535 )); then
+    log "Invalid loopback ComfyUI target port."
+    return 1
+  fi
 
   install_tailscale_if_missing
   install -d -m 0700 "$(dirname "${socket}")" "${var_root}"
@@ -85,7 +91,7 @@ start_private_tailscale_comfy() {
     --accept-routes=false
   unset TAILSCALE_AUTH_KEY
 
-  tailscale --socket="${socket}" serve --bg --https="${port}" http://127.0.0.1:${target_port}
+  tailscale --socket="${socket}" serve --bg --https="${port}" "http://127.0.0.1:${target_port}"
   local dns_name
   dns_name="$(tailscale --socket="${socket}" status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"].get("DNSName", "").rstrip("."))')"
   [[ -n "${dns_name}" ]] || { log "Tailscale joined but did not report a DNS name."; return 1; }

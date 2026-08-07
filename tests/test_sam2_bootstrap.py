@@ -9,6 +9,35 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 class Sam2BootstrapTests(unittest.TestCase):
+    def test_runtime_profiles_are_exact_and_unknown_profiles_fail_closed(self) -> None:
+        profile = REPO / "lib/runtime-profile.sh"
+        for name, torch, vision, audio, cuda, index in (
+            ("cu130", "2.9.1+cu130", "0.24.1+cu130", "2.9.1+cu130", "13.0", "cu130"),
+            ("cu128", "2.9.1+cu128", "0.24.1+cu128", "2.9.1+cu128", "12.8", "cu128"),
+        ):
+            command = (
+                f"COMFY_RUNTIME_PROFILE={name}; source {profile!s}; "
+                "printf '%s|%s|%s|%s|%s|%s' \"$COMFY_RUNTIME_PROFILE\" \"$APPROVED_TORCH_VERSION\" "
+                "\"$APPROVED_TORCHVISION_VERSION\" \"$APPROVED_TORCHAUDIO_VERSION\" "
+                "\"$APPROVED_TORCH_CUDA_VERSION\" \"$APPROVED_TORCH_INDEX_URL\""
+            )
+            result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, f"{name}|{torch}|{vision}|{audio}|{cuda}|https://download.pytorch.org/whl/{index}")
+        rejected = subprocess.run(
+            ["bash", "-c", f"COMFY_RUNTIME_PROFILE=mutable; source {profile!s}"],
+            text=True,
+            capture_output=True,
+            timeout=10,
+        )
+        self.assertEqual(rejected.returncode, 64)
+
+    def test_vast_runtime_installer_uses_selected_profile_index(self) -> None:
+        onstart = (REPO / "onstart.sh").read_text(encoding="utf-8")
+        self.assertIn('source "${SCRIPT_DIR}/lib/runtime-profile.sh"', onstart)
+        self.assertIn('--index-url "${APPROVED_TORCH_INDEX_URL}"', onstart)
+        self.assertIn("Installing the approved ${COMFY_RUNTIME_PROFILE}", onstart)
+
     def test_required_video_combine_source_is_in_baseline_manifest(self) -> None:
         manifest = (REPO / "custom_nodes_manifest.txt").read_text(encoding="utf-8")
         self.assertIn("Kosinkadink/ComfyUI-VideoHelperSuite", manifest)
@@ -57,7 +86,7 @@ class Sam2BootstrapTests(unittest.TestCase):
     def test_fresh_vast_image_establishes_exact_runtime_before_preflight(self) -> None:
         onstart = (REPO / "onstart.sh").read_text(encoding="utf-8")
         self.assertIn("ensure_approved_torch_runtime", onstart)
-        self.assertIn("https://download.pytorch.org/whl/cu130", onstart)
+        self.assertIn('"${APPROVED_TORCH_INDEX_URL}"', onstart)
         self.assertIn('"torch==${APPROVED_TORCH_VERSION}"', onstart)
         self.assertIn('"torchvision==${APPROVED_TORCHVISION_VERSION}"', onstart)
         self.assertIn('"torchaudio==${APPROVED_TORCHAUDIO_VERSION}"', onstart)
@@ -101,11 +130,7 @@ class Sam2BootstrapTests(unittest.TestCase):
         self.assertIn("optional custom-node install scripts had failures", onstart)
         self.assertIn("Approved runtime identity drifted during custom-node install scripts; refusing readiness.", onstart)
         self.assertIn("verify_approved_torch_runtime", onstart)
-        self.assertIn('readonly APPROVED_TORCH_VERSION="2.9.1+cu130"', onstart)
-        self.assertIn('readonly APPROVED_TORCHVISION_VERSION="0.24.1+cu130"', onstart)
-        self.assertIn('readonly APPROVED_TORCHAUDIO_VERSION="2.9.1+cu130"', onstart)
-        self.assertIn('readonly APPROVED_TORCH_CUDA_VERSION="13.0"', onstart)
-        self.assertIn('readonly APPROVED_SAGEATTENTION_VERSION="1.0.6"', onstart)
+        self.assertIn('source "${SCRIPT_DIR}/lib/runtime-profile.sh"', onstart)
         self.assertLess(
             onstart.index("Approved Torch/torchvision/CUDA/SageAttention runtime preflight failed before custom-node requirements."),
             onstart.index("Custom node requirements unchanged; skipping reinstall."),

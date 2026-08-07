@@ -31,13 +31,10 @@ if [[ -x /opt/conda/bin/python3 ]]; then
   RUNTIME_PYTHON=/opt/conda/bin/python3
 fi
 readonly RUNTIME_PYTHON
-readonly APPROVED_TORCH_VERSION="2.9.1+cu130"
-readonly APPROVED_TORCHVISION_VERSION="0.24.1+cu130"
-readonly APPROVED_TORCHAUDIO_VERSION="2.9.1+cu130"
-readonly APPROVED_TORCH_CUDA_VERSION="13.0"
-readonly APPROVED_SAGEATTENTION_VERSION="1.0.6"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
+# shellcheck source=lib/runtime-profile.sh
+source "${SCRIPT_DIR}/lib/runtime-profile.sh"
 # shellcheck source=lib/tailscale-private-comfy.sh
 source "${SCRIPT_DIR}/lib/tailscale-private-comfy.sh"
 readonly CODEX_STABLE_FILES=(
@@ -162,9 +159,9 @@ ensure_approved_torch_runtime() {
     return 0
   fi
 
-  log "Installing the approved CUDA 13 Torch runtime for this fresh Vast image."
+  log "Installing the approved ${COMFY_RUNTIME_PROFILE} Torch runtime for this fresh Vast image."
   if ! pip_install_with_fallback install --no-cache-dir \
-      --index-url https://download.pytorch.org/whl/cu130 \
+      --index-url "${APPROVED_TORCH_INDEX_URL}" \
       "torch==${APPROVED_TORCH_VERSION}" \
       "torchvision==${APPROVED_TORCHVISION_VERSION}" \
       "torchaudio==${APPROVED_TORCHAUDIO_VERSION}"; then
@@ -180,7 +177,7 @@ ensure_approved_torch_runtime() {
     log "Fresh-image runtime installation did not produce the exact approved identity."
     return 1
   fi
-  log "Approved CUDA 13 Torch runtime installed and verified."
+  log "Approved ${COMFY_RUNTIME_PROFILE} Torch runtime installed and verified."
 }
 
 write_torch_runtime_constraints() {
