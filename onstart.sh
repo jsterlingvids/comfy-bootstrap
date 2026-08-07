@@ -60,6 +60,47 @@ pip_install_with_fallback() {
   python3 -m pip "${pip_args[@]}" "${network_args[@]}" --break-system-packages
 }
 
+requirements_use_existing_torch_build_env() {
+  local requirements_file="$1"
+  grep -Eiq 'github\.com[/:]facebookresearch/sam2([@#?[:space:]]|$)' "${requirements_file}"
+}
+
+capture_torch_runtime_identity() {
+  python3 - <<'PY'
+import importlib.metadata as metadata
+import torch
+
+try:
+    sage = metadata.version("sageattention")
+except metadata.PackageNotFoundError:
+    sage = "absent"
+print(f"torch={torch.__version__};sageattention={sage}")
+PY
+}
+
+verify_existing_torch_build_env() {
+  python3 - <<'PY'
+import importlib.metadata as metadata
+from packaging.version import Version
+import torch
+
+if Version(torch.__version__.split("+", 1)[0]) < Version("2.5.1"):
+    raise SystemExit(f"SAM2 requires torch>=2.5.1; found {torch.__version__}")
+if Version(metadata.version("setuptools")) < Version("61.0"):
+    raise SystemExit("SAM2 requires setuptools>=61.0")
+PY
+}
+
+verify_torch_runtime_unchanged() {
+  local expected="$1"
+  local actual=""
+  actual="$(capture_torch_runtime_identity)" || return 1
+  if [[ "${actual}" != "${expected}" ]]; then
+    log "Torch/SageAttention runtime identity changed during custom-node installation; expected ${expected}, found ${actual}."
+    return 1
+  fi
+}
+
 require_env() {
   local name="$1"
   if [[ -z "${!name:-}" ]]; then
@@ -582,9 +623,25 @@ install_node_requirements() {
   fi
 
   local requirements_file=""
+  local torch_runtime_before=""
   for requirements_file in "${requirements_files[@]}"; do
     log "Installing Python requirements from ${requirements_file}"
-    if pip_install_with_fallback install --no-cache-dir -r "${requirements_file}"; then
+    if requirements_use_existing_torch_build_env "${requirements_file}"; then
+      if ! verify_existing_torch_build_env; then
+        failed_count=$((failed_count + 1))
+        log "WARNING: refusing SAM2 installation because the existing Torch build environment is incomplete."
+        continue
+      fi
+      torch_runtime_before="$(capture_torch_runtime_identity)"
+      log "SAM2 detected; reusing the existing Torch build environment without PEP 517 isolation."
+      if pip_install_with_fallback install --no-cache-dir --no-build-isolation -r "${requirements_file}" &&
+         verify_torch_runtime_unchanged "${torch_runtime_before}"; then
+        success_count=$((success_count + 1))
+      else
+        failed_count=$((failed_count + 1))
+        log "WARNING: failed installing SAM2-bearing requirements or Torch/SageAttention identity verification failed."
+      fi
+    elif pip_install_with_fallback install --no-cache-dir -r "${requirements_file}"; then
       success_count=$((success_count + 1))
     else
       failed_count=$((failed_count + 1))
