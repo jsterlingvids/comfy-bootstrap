@@ -1268,8 +1268,8 @@ wait_for_comfy_listener() {
 
 ensure_mcp_panel_pinned() {
   local panel_repo="${MCP_PANEL_REPOSITORY:-${SCRIPT_DIR}/vendor/comfyui-mcp-panel.bundle}"
-  local panel_commit="${MCP_PANEL_COMMIT:-889589cf555ef907b3762cb40e21893c8863d0c8}"
-  local panel_bundle_sha256="${MCP_PANEL_BUNDLE_SHA256:-c7cf9d0b5253ed3c68cbed6d8b25665c6c123e2d51062e8863cc718f48fbc21c}"
+  local panel_commit="${MCP_PANEL_COMMIT:-50f94c32d1d36171dd4b6122c8585eea308c7317}"
+  local panel_bundle_sha256="${MCP_PANEL_BUNDLE_SHA256:-2e7c0987a3a228109b38c49a5fa5987726537cca4c12554fe8cbbebefc510a6b}"
   local panel_dir="${CUSTOM_NODES_DIR}/comfyui-mcp-panel"
   local archive_dir=""
   archive_dir="${BOOTSTRAP_STATE_ROOT}/disabled-custom-nodes/comfyui-mcp-panel-$(date -u '+%Y%m%dT%H%M%SZ')"
@@ -1285,7 +1285,9 @@ ensure_mcp_panel_pinned() {
        grep -Fq 'model_download_routes' "${panel_dir}/__init__.py" &&
        grep -Fq 'models_download' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
        grep -Fq 'graph_stage_input_image' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
-       grep -Fq 'graph_stage_input_video' "${panel_dir}/web/js/comfyui-mcp-panel.js"; then
+       grep -Fq 'graph_stage_input_video' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
+       grep -Fq 'graph_expert_snapshot' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
+       grep -Fq 'input_asset_ticket_request' "${panel_dir}/web/js/comfyui-mcp-panel.js"; then
       log "Pinned MCP Panel already present and source markers verified at ${panel_commit}."
       return 0
     fi
@@ -1314,7 +1316,9 @@ ensure_mcp_panel_pinned() {
     grep -Fq 'model_download_routes' "${panel_dir}/__init__.py" &&
     grep -Fq 'models_download' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
     grep -Fq 'graph_stage_input_image' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
-       grep -Fq 'graph_stage_input_video' "${panel_dir}/web/js/comfyui-mcp-panel.js"; }; then
+    grep -Fq 'graph_stage_input_video' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
+    grep -Fq 'graph_expert_snapshot' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
+    grep -Fq 'input_asset_ticket_request' "${panel_dir}/web/js/comfyui-mcp-panel.js"; }; then
     log "Pinned MCP Panel source markers are missing."
     return 1
   fi
