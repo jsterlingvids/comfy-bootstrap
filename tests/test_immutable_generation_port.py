@@ -147,11 +147,11 @@ class ImmutableGenerationPortTests(unittest.TestCase):
         self.assertIn('PRESERVED_BAKED_NODES = ("comfyui-mcp-panel",)', activate)
 
     def test_bridge_is_mandatory_wss_and_read_back(self) -> None:
-        bridge_commit = "0ddf7ec3e83a86a8a417fe868d377a63496e4cef"
+        bridge_commit = "bac89dad3d082d17c1278dcec33ced7d012179ef"
         bridge_bundle = REPO / "vendor/hermes-comfy-bridge.bundle"
         self.assertEqual(
             hashlib.sha256(bridge_bundle.read_bytes()).hexdigest(),
-            "a6ca780e1b70e848712c9a23e0006aa7e6406251e64167030dd3ad19636d9a5d",
+            "72e879fa5d3e171bcdf39ccac0aa1e84eb3fabdf76e6732be239f632c46c58e9",
         )
         verified = subprocess.run(
             ["git", "bundle", "verify", str(bridge_bundle)],
