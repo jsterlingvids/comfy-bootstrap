@@ -1268,8 +1268,8 @@ wait_for_comfy_listener() {
 
 ensure_mcp_panel_pinned() {
   local panel_repo="${MCP_PANEL_REPOSITORY:-${SCRIPT_DIR}/vendor/comfyui-mcp-panel.bundle}"
-  local panel_commit="${MCP_PANEL_COMMIT:-9314fd83d5005bf4dcad3b75c13ff2acd6a8c42a}"
-  local panel_bundle_sha256="${MCP_PANEL_BUNDLE_SHA256:-24a21a77d08c38d99c5a55eb6cd405d411199960b36df58a8c6519f1a6e98c25}"
+  local panel_commit="${MCP_PANEL_COMMIT:-889589cf555ef907b3762cb40e21893c8863d0c8}"
+  local panel_bundle_sha256="${MCP_PANEL_BUNDLE_SHA256:-c7cf9d0b5253ed3c68cbed6d8b25665c6c123e2d51062e8863cc718f48fbc21c}"
   local panel_dir="${CUSTOM_NODES_DIR}/comfyui-mcp-panel"
   local archive_dir=""
   archive_dir="${BOOTSTRAP_STATE_ROOT}/disabled-custom-nodes/comfyui-mcp-panel-$(date -u '+%Y%m%dT%H%M%SZ')"
@@ -1284,7 +1284,8 @@ ensure_mcp_panel_pinned() {
        grep -Fq 'bridge_url' "${panel_dir}/__init__.py" &&
        grep -Fq 'model_download_routes' "${panel_dir}/__init__.py" &&
        grep -Fq 'models_download' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
-       grep -Fq 'graph_stage_input_image' "${panel_dir}/web/js/comfyui-mcp-panel.js"; then
+       grep -Fq 'graph_stage_input_image' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
+       grep -Fq 'graph_stage_input_video' "${panel_dir}/web/js/comfyui-mcp-panel.js"; then
       log "Pinned MCP Panel already present and source markers verified at ${panel_commit}."
       return 0
     fi
@@ -1312,7 +1313,8 @@ ensure_mcp_panel_pinned() {
     grep -Fq 'bridge_url' "${panel_dir}/__init__.py" &&
     grep -Fq 'model_download_routes' "${panel_dir}/__init__.py" &&
     grep -Fq 'models_download' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
-    grep -Fq 'graph_stage_input_image' "${panel_dir}/web/js/comfyui-mcp-panel.js"; }; then
+    grep -Fq 'graph_stage_input_image' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
+       grep -Fq 'graph_stage_input_video' "${panel_dir}/web/js/comfyui-mcp-panel.js"; }; then
     log "Pinned MCP Panel source markers are missing."
     return 1
   fi
