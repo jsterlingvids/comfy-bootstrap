@@ -147,6 +147,24 @@ class ImmutableGenerationPortTests(unittest.TestCase):
         self.assertIn('PRESERVED_BAKED_NODES = ("comfyui-mcp-panel",)', activate)
 
     def test_bridge_is_mandatory_wss_and_read_back(self) -> None:
+        bridge_commit = "0ddf7ec3e83a86a8a417fe868d377a63496e4cef"
+        bridge_bundle = REPO / "vendor/hermes-comfy-bridge.bundle"
+        self.assertEqual(
+            hashlib.sha256(bridge_bundle.read_bytes()).hexdigest(),
+            "a6ca780e1b70e848712c9a23e0006aa7e6406251e64167030dd3ad19636d9a5d",
+        )
+        verified = subprocess.run(
+            ["git", "bundle", "verify", str(bridge_bundle)],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=20,
+        )
+        self.assertEqual(verified.returncode, 0, verified.stdout)
+        heads = subprocess.check_output(
+            ["git", "bundle", "list-heads", str(bridge_bundle)], text=True, timeout=20
+        )
+        self.assertIn(bridge_commit, heads)
         self.assertIn("HERMES_PANEL_BRIDGE_URL is required for MCP Panel/Hermes control readiness.", self.onstart)
         self.assertIn('[[ "${bridge_url}" == wss://* ]]', self.onstart)
         self.assertIn("/comfyui_mcp_panel/advertise_bridge", self.onstart)

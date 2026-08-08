@@ -10,6 +10,7 @@ This repository bootstraps the existing ComfyUI installation in `vastai/comfy`, 
 - Vast does not autosave unless both `SNAPSHOT_WRITER=1` and a unique `SNAPSHOT_WRITER_ID` are supplied. Do not authorize two providers/instances at once; stop the old writer before handing publication to a new one.
 - Codex state is provider-local by default at `myb2:comfy-provider-local/vast/codex-home`. Codex/provider credentials are not part of shared Comfy generations.
 - The MCP Panel is not mutable shared state. Bootstrap preserves and pins `comfyui-mcp-panel` at `f322153ebc1189e289304e3f0f773d67b03d07b6` and disables Panel backend autospawn.
+- Recovery authority for the reviewed Panel and host-side Hermes bridge lives in checksum-verified self-contained Git bundles under `vendor/`; neither recovery path depends on the unavailable historical Panel upstream commit.
 
 ## Required configuration
 
