@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import tempfile
 import unittest
+import hashlib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -116,8 +117,29 @@ class ImmutableGenerationPortTests(unittest.TestCase):
         self.assertIn("Using the custom-node manifest retained from the verified generation.", self.onstart)
 
     def test_panel_is_pinned_preserved_and_not_snapshotted(self) -> None:
-        commit = "b81b10dd86862fd26cc2177ab82152a73d3a0b1c"
+        commit = "f322153ebc1189e289304e3f0f773d67b03d07b6"
+        bundle = REPO / "vendor/comfyui-mcp-panel.bundle"
+        self.assertEqual(
+            hashlib.sha256(bundle.read_bytes()).hexdigest(),
+            "7b35776d3e1edbde4744fd6fab048f3ed9349e9a9e85fa75bef138968c2bfd62",
+        )
+        verified = subprocess.run(
+            ["git", "bundle", "verify", str(bundle)],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=20,
+        )
+        self.assertEqual(verified.returncode, 0, verified.stdout)
+        heads = subprocess.check_output(
+            ["git", "bundle", "list-heads", str(bundle)], text=True, timeout=20
+        )
+        self.assertIn(commit, heads)
         self.assertIn(commit, self.onstart)
+        self.assertIn("vendor/comfyui-mcp-panel.bundle", self.onstart)
+        self.assertIn("Vendored MCP Panel bundle checksum mismatch.", self.onstart)
+        self.assertIn("model_download_routes", self.onstart)
+        self.assertIn("models_download", self.onstart)
         self.assertIn("ensure_mcp_panel_pinned", self.onstart)
         self.assertIn("COMFYUI_MCP_NO_AUTOSPAWN=1", self.onstart)
         self.assertIn('comfyui-mcp-panel/**', self.save)

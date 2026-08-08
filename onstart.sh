@@ -1267,8 +1267,9 @@ wait_for_comfy_listener() {
 }
 
 ensure_mcp_panel_pinned() {
-  local panel_repo="${MCP_PANEL_REPOSITORY:-https://github.com/artokun/comfyui-mcp-panel.git}"
-  local panel_commit="${MCP_PANEL_COMMIT:-b81b10dd86862fd26cc2177ab82152a73d3a0b1c}"
+  local panel_repo="${MCP_PANEL_REPOSITORY:-${SCRIPT_DIR}/vendor/comfyui-mcp-panel.bundle}"
+  local panel_commit="${MCP_PANEL_COMMIT:-f322153ebc1189e289304e3f0f773d67b03d07b6}"
+  local panel_bundle_sha256="${MCP_PANEL_BUNDLE_SHA256:-7b35776d3e1edbde4744fd6fab048f3ed9349e9a9e85fa75bef138968c2bfd62}"
   local panel_dir="${CUSTOM_NODES_DIR}/comfyui-mcp-panel"
   local archive_dir=""
   archive_dir="${BOOTSTRAP_STATE_ROOT}/disabled-custom-nodes/comfyui-mcp-panel-$(date -u '+%Y%m%dT%H%M%SZ')"
@@ -1280,7 +1281,9 @@ ensure_mcp_panel_pinned() {
     if [[ "${current_origin}" == "${panel_repo}" && "${current_commit}" == "${panel_commit}" ]] &&
        [[ -f "${panel_dir}/__init__.py" && -f "${panel_dir}/web/js/comfyui-mcp-panel.js" ]] &&
        grep -Fq 'advertise_bridge' "${panel_dir}/__init__.py" &&
-       grep -Fq 'bridge_url' "${panel_dir}/__init__.py"; then
+       grep -Fq 'bridge_url' "${panel_dir}/__init__.py" &&
+       grep -Fq 'model_download_routes' "${panel_dir}/__init__.py" &&
+       grep -Fq 'models_download' "${panel_dir}/web/js/comfyui-mcp-panel.js"; then
       log "Pinned MCP Panel already present and source markers verified at ${panel_commit}."
       return 0
     fi
@@ -1292,12 +1295,22 @@ ensure_mcp_panel_pinned() {
     log "Archived non-canonical MCP Panel outside custom_nodes."
   fi
   log "Installing pinned MCP Panel commit ${panel_commit}."
-  git clone --filter=blob:none --no-checkout "${panel_repo}" "${panel_dir}"
-  git -C "${panel_dir}" fetch --depth 1 origin "${panel_commit}"
+  if [[ -f "${panel_repo}" ]]; then
+    if [[ "$(sha256sum "${panel_repo}" | awk '{print $1}')" != "${panel_bundle_sha256}" ]]; then
+      log "Vendored MCP Panel bundle checksum mismatch."
+      return 1
+    fi
+    git clone --no-checkout "${panel_repo}" "${panel_dir}"
+  else
+    git clone --filter=blob:none --no-checkout "${panel_repo}" "${panel_dir}"
+    git -C "${panel_dir}" fetch --depth 1 origin "${panel_commit}"
+  fi
   git -C "${panel_dir}" checkout --detach "${panel_commit}"
   if ! { [[ -f "${panel_dir}/__init__.py" && -f "${panel_dir}/web/js/comfyui-mcp-panel.js" ]] &&
     grep -Fq 'advertise_bridge' "${panel_dir}/__init__.py" &&
-    grep -Fq 'bridge_url' "${panel_dir}/__init__.py"; }; then
+    grep -Fq 'bridge_url' "${panel_dir}/__init__.py" &&
+    grep -Fq 'model_download_routes' "${panel_dir}/__init__.py" &&
+    grep -Fq 'models_download' "${panel_dir}/web/js/comfyui-mcp-panel.js"; }; then
     log "Pinned MCP Panel source markers are missing."
     return 1
   fi
