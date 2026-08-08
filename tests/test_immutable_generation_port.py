@@ -117,11 +117,11 @@ class ImmutableGenerationPortTests(unittest.TestCase):
         self.assertIn("Using the custom-node manifest retained from the verified generation.", self.onstart)
 
     def test_panel_is_pinned_preserved_and_not_snapshotted(self) -> None:
-        commit = "f322153ebc1189e289304e3f0f773d67b03d07b6"
+        commit = "9314fd83d5005bf4dcad3b75c13ff2acd6a8c42a"
         bundle = REPO / "vendor/comfyui-mcp-panel.bundle"
         self.assertEqual(
             hashlib.sha256(bundle.read_bytes()).hexdigest(),
-            "7b35776d3e1edbde4744fd6fab048f3ed9349e9a9e85fa75bef138968c2bfd62",
+            "24a21a77d08c38d99c5a55eb6cd405d411199960b36df58a8c6519f1a6e98c25",
         )
         verified = subprocess.run(
             ["git", "bundle", "verify", str(bundle)],
@@ -140,6 +140,7 @@ class ImmutableGenerationPortTests(unittest.TestCase):
         self.assertIn("Vendored MCP Panel bundle checksum mismatch.", self.onstart)
         self.assertIn("model_download_routes", self.onstart)
         self.assertIn("models_download", self.onstart)
+        self.assertIn("graph_stage_input_image", self.onstart)
         self.assertIn("ensure_mcp_panel_pinned", self.onstart)
         self.assertIn("COMFYUI_MCP_NO_AUTOSPAWN=1", self.onstart)
         self.assertIn('comfyui-mcp-panel/**', self.save)
@@ -147,11 +148,11 @@ class ImmutableGenerationPortTests(unittest.TestCase):
         self.assertIn('PRESERVED_BAKED_NODES = ("comfyui-mcp-panel",)', activate)
 
     def test_bridge_is_mandatory_wss_and_read_back(self) -> None:
-        bridge_commit = "bac89dad3d082d17c1278dcec33ced7d012179ef"
+        bridge_commit = "6c3fa27f5439758dd2f3493927785b4d33adf7dc"
         bridge_bundle = REPO / "vendor/hermes-comfy-bridge.bundle"
         self.assertEqual(
             hashlib.sha256(bridge_bundle.read_bytes()).hexdigest(),
-            "72e879fa5d3e171bcdf39ccac0aa1e84eb3fabdf76e6732be239f632c46c58e9",
+            "9fde01979361b72b9f4fbd944aec1c70947fc99123672ec5e46268f7b8cbb948",
         )
         verified = subprocess.run(
             ["git", "bundle", "verify", str(bridge_bundle)],
