@@ -122,8 +122,8 @@ class ImmutableGenerationPortTests(unittest.TestCase):
 
     def test_panel_release_pins_reject_mismatched_environment_overrides(self) -> None:
         repository = "${SCRIPT_DIR}/vendor/comfyui-mcp-panel.bundle"
-        commit = "3f939750ddc46b55713f147dd680d72f523a4a16"
-        checksum = "1d29572732fff44852e2d8f897802d0c65af0ade1591dc93e23dfa1b8b2733af"
+        commit = "826a810e06bc3ed534a74142f99b0e92133d1805"
+        checksum = "2c9fbee8eb3094771932900da7cbdbe91517b401bef421a2a426ce7caad53813"
         validator = "validate_mcp_panel_release_overrides() {" + self.onstart.split(
             "validate_mcp_panel_release_overrides() {", 1
         )[1].split("\n\nensure_mcp_panel_pinned() {", 1)[0]
@@ -184,11 +184,11 @@ class ImmutableGenerationPortTests(unittest.TestCase):
         self.assertNotIn('local panel_bundle_sha256="${MCP_PANEL_BUNDLE_SHA256:-', self.onstart)
 
     def test_panel_is_pinned_preserved_and_not_snapshotted(self) -> None:
-        commit = "3f939750ddc46b55713f147dd680d72f523a4a16"
+        commit = "826a810e06bc3ed534a74142f99b0e92133d1805"
         bundle = REPO / "vendor/comfyui-mcp-panel.bundle"
         self.assertEqual(
             hashlib.sha256(bundle.read_bytes()).hexdigest(),
-            "1d29572732fff44852e2d8f897802d0c65af0ade1591dc93e23dfa1b8b2733af",
+            "2c9fbee8eb3094771932900da7cbdbe91517b401bef421a2a426ce7caad53813",
         )
         verified = subprocess.run(
             ["git", "bundle", "verify", str(bundle)],
@@ -207,6 +207,9 @@ class ImmutableGenerationPortTests(unittest.TestCase):
         self.assertIn("Vendored MCP Panel bundle checksum mismatch.", self.onstart)
         self.assertIn("Pinned MCP Panel checkout did not resolve to the reviewed commit.", self.onstart)
         self.assertIn("model_download_routes", self.onstart)
+        self.assertIn("_advertised_bridge_dial", self.onstart)
+        self.assertIn("bridge-capability.js", self.onstart)
+        self.assertIn("advertisedBridgeDialOptions", self.onstart)
         self.assertIn("models_download", self.onstart)
         self.assertIn("graph_stage_input_video", self.onstart)
         self.assertIn("graph_expert_snapshot", self.onstart)

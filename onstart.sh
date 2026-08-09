@@ -35,8 +35,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 # Release template pins: these reviewed values are deliberately not configurable.
 readonly MCP_PANEL_RELEASE_REPOSITORY="${SCRIPT_DIR}/vendor/comfyui-mcp-panel.bundle"
-readonly MCP_PANEL_RELEASE_COMMIT="3f939750ddc46b55713f147dd680d72f523a4a16"
-readonly MCP_PANEL_RELEASE_BUNDLE_SHA256="1d29572732fff44852e2d8f897802d0c65af0ade1591dc93e23dfa1b8b2733af"
+readonly MCP_PANEL_RELEASE_COMMIT="826a810e06bc3ed534a74142f99b0e92133d1805"
+readonly MCP_PANEL_RELEASE_BUNDLE_SHA256="2c9fbee8eb3094771932900da7cbdbe91517b401bef421a2a426ce7caad53813"
 # shellcheck source=lib/runtime-profile.sh
 source "${SCRIPT_DIR}/lib/runtime-profile.sh"
 # shellcheck source=lib/tailscale-private-comfy.sh
@@ -1326,7 +1326,10 @@ ensure_mcp_panel_pinned() {
        [[ -f "${panel_dir}/__init__.py" && -f "${panel_dir}/web/js/comfyui-mcp-panel.js" ]] &&
        grep -Fq 'advertise_bridge' "${panel_dir}/__init__.py" &&
        grep -Fq 'bridge_url' "${panel_dir}/__init__.py" &&
+       grep -Fq '_advertised_bridge_dial' "${panel_dir}/__init__.py" &&
        grep -Fq 'model_download_routes' "${panel_dir}/__init__.py" &&
+       grep -Fq 'bridge-capability.js' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
+       grep -Fq 'advertisedBridgeDialOptions' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
        grep -Fq 'models_download' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
        grep -Fq 'graph_stage_input_image' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
        grep -Fq 'graph_stage_input_video' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
@@ -1361,7 +1364,10 @@ ensure_mcp_panel_pinned() {
   if ! { [[ -f "${panel_dir}/__init__.py" && -f "${panel_dir}/web/js/comfyui-mcp-panel.js" ]] &&
     grep -Fq 'advertise_bridge' "${panel_dir}/__init__.py" &&
     grep -Fq 'bridge_url' "${panel_dir}/__init__.py" &&
+    grep -Fq '_advertised_bridge_dial' "${panel_dir}/__init__.py" &&
     grep -Fq 'model_download_routes' "${panel_dir}/__init__.py" &&
+    grep -Fq 'bridge-capability.js' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
+    grep -Fq 'advertisedBridgeDialOptions' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
     grep -Fq 'models_download' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
     grep -Fq 'graph_stage_input_image' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
     grep -Fq 'graph_stage_input_video' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
