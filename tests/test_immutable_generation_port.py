@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import json
 import subprocess
+import sys
 import tempfile
+import threading
 import unittest
 import hashlib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -221,9 +225,116 @@ class ImmutableGenerationPortTests(unittest.TestCase):
         self.assertIn('url.scheme != "wss"', advertise)
         self.assertIn("not url.fragment", advertise)
         self.assertIn("url.query", advertise)
+        self.assertIn("urlunsplit", advertise)
+        self.assertIn('readback.get("url") != expected_url', advertise)
+        self.assertIn('readback.get("protocol") != expected_protocol', advertise)
         self.assertIn("/comfyui_mcp_panel/advertise_bridge", advertise)
         self.assertIn("/comfyui_mcp_panel/bridge_url", advertise)
         self.assertGreaterEqual(self.onstart.count("advertise_hermes_bridge"), 3)
+
+    def test_bridge_fragment_readback_uses_sanitized_endpoint_and_protocol(self) -> None:
+        advertised: list[dict[str, str]] = []
+        case = self
+
+        class PanelHandler(BaseHTTPRequestHandler):
+            def log_message(self, format: str, *args: object) -> None:
+                pass
+
+            def do_POST(self) -> None:
+                case.assertEqual(self.path, "/comfyui_mcp_panel/advertise_bridge")
+                advertised.append(json.loads(self.rfile.read(int(self.headers["content-length"]))))
+                self.send_response(200)
+                self.end_headers()
+
+            def do_GET(self) -> None:
+                case.assertEqual(self.path, "/comfyui_mcp_panel/bridge_url")
+                body = json.dumps(
+                    {"url": "wss://bridge.example.test/control", "protocol": "opaque-capability"}
+                ).encode()
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), PanelHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            advertise = "advertise_hermes_bridge() {" + self.onstart.split(
+                "advertise_hermes_bridge() {", 1
+            )[1].split("\n\nvalidate_workflow_nodes_available() {", 1)[0]
+            result = subprocess.run(
+                ["bash", "-c", "set -Eeuo pipefail\nlog() { :; }\n" + advertise + "\nadvertise_hermes_bridge\n"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env={
+                    "PATH": "/usr/bin:/bin",
+                    "RUNTIME_PYTHON": sys.executable,
+                    "DEFAULT_COMFY_PORT": str(server.server_port),
+                    "COMFYUI_ACTIVE_PORT": str(server.server_port),
+                    "HERMES_PANEL_BRIDGE_URL": "wss://bridge.example.test/control#opaque-capability",
+                },
+                timeout=20,
+            )
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            advertised,
+            [{"url": "wss://bridge.example.test/control#opaque-capability"}],
+        )
+
+    def test_bridge_fragment_readback_rejects_protocol_mismatch(self) -> None:
+        class PanelHandler(BaseHTTPRequestHandler):
+            def log_message(self, format: str, *args: object) -> None:
+                pass
+
+            def do_POST(self) -> None:
+                self.send_response(200)
+                self.end_headers()
+
+            def do_GET(self) -> None:
+                body = b'{"url":"wss://bridge.example.test/control","protocol":"wrong-capability"}'
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), PanelHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            advertise = "advertise_hermes_bridge() {" + self.onstart.split(
+                "advertise_hermes_bridge() {", 1
+            )[1].split("\n\nvalidate_workflow_nodes_available() {", 1)[0]
+            result = subprocess.run(
+                ["bash", "-c", "set -Eeuo pipefail\nlog() { printf '%s\\n' \"$*\"; }\n" + advertise + "\nadvertise_hermes_bridge\n"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env={
+                    "PATH": "/usr/bin:/bin",
+                    "RUNTIME_PYTHON": sys.executable,
+                    "DEFAULT_COMFY_PORT": str(server.server_port),
+                    "COMFYUI_ACTIVE_PORT": str(server.server_port),
+                    "HERMES_PANEL_BRIDGE_URL": "wss://bridge.example.test/control#opaque-capability",
+                },
+                timeout=20,
+            )
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("MCP Panel did not retain the advertised Hermes bridge route.", result.stdout)
+        self.assertNotIn("opaque-capability", result.stdout + result.stderr)
 
     def test_vast_bootstrap_does_not_manage_or_vendor_a_bridge(self) -> None:
         forbidden = (

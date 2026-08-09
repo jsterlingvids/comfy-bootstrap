@@ -1540,34 +1540,64 @@ raise SystemExit(0 if not q.get("queue_running") and not q.get("queue_pending") 
 
 
 advertise_hermes_bridge() {
-  local bridge_url="${HERMES_PANEL_BRIDGE_URL:-}"
   local port="${COMFYUI_ACTIVE_PORT:-${DEFAULT_COMFY_PORT}}"
-  [[ -n "${bridge_url}" ]] || {
+  local advertise_status=0
+  [[ -n "${HERMES_PANEL_BRIDGE_URL:-}" ]] || {
     log "HERMES_PANEL_BRIDGE_URL is required for MCP Panel/Hermes control readiness."
     return 1
   }
-  if ! HERMES_PANEL_BRIDGE_URL="${bridge_url}" "${RUNTIME_PYTHON}" - <<'PY'
-from os import environ
-from urllib.parse import urlsplit
 
-url = urlsplit(environ["HERMES_PANEL_BRIDGE_URL"])
+  HERMES_PANEL_BRIDGE_URL="${HERMES_PANEL_BRIDGE_URL}" COMFYUI_ACTIVE_PORT="${port}" "${RUNTIME_PYTHON}" - <<'PY' || advertise_status=$?
+import json
+from os import environ
+from urllib.parse import urlsplit, urlunsplit
+from urllib.request import ProxyHandler, Request, build_opener
+
+bridge_url = environ["HERMES_PANEL_BRIDGE_URL"]
+try:
+    url = urlsplit(bridge_url)
+    expected_url = urlunsplit((url.scheme, url.netloc, url.path, "", ""))
+except Exception:
+    raise SystemExit(2)
 if url.scheme != "wss" or not url.netloc or not url.fragment or url.query:
+    raise SystemExit(2)
+
+expected_protocol = url.fragment
+payload = json.dumps({"url": bridge_url}).encode("utf-8")
+request = Request(
+    f"http://127.0.0.1:{environ['COMFYUI_ACTIVE_PORT']}/comfyui_mcp_panel/advertise_bridge",
+    data=payload,
+    headers={"content-type": "application/json"},
+    method="POST",
+)
+opener = build_opener(ProxyHandler({}))
+try:
+    with opener.open(request, timeout=10) as response:
+        if response.status != 200:
+            raise ValueError("unexpected advertise response status")
+    with opener.open(
+        f"http://127.0.0.1:{environ['COMFYUI_ACTIVE_PORT']}/comfyui_mcp_panel/bridge_url",
+        timeout=10,
+    ) as response:
+        if response.status != 200:
+            raise ValueError("unexpected readback response status")
+        readback = json.load(response)
+except Exception:
     raise SystemExit(1)
+
+if readback.get("url") != expected_url or readback.get("protocol") != expected_protocol:
+    raise SystemExit(3)
 PY
-  then
+  if (( advertise_status == 2 )); then
     log "Refusing Hermes panel bridge URL without a WSS fragment capability."
     return 1
   fi
-  if ! HERMES_PANEL_BRIDGE_URL="${bridge_url}" "${RUNTIME_PYTHON}" -c 'import json,os; print(json.dumps({"url":os.environ["HERMES_PANEL_BRIDGE_URL"]}))' |
-      curl -fsS --max-time 10 -H 'content-type: application/json' --data-binary @- \
-        "http://127.0.0.1:${port}/comfyui_mcp_panel/advertise_bridge" >/dev/null; then
+  if (( advertise_status == 1 )); then
     log "Failed to advertise the private Hermes bridge to MCP Panel."
     return 1
   fi
-  if ! HERMES_PANEL_BRIDGE_URL="${bridge_url}" curl -fsS --max-time 10 \
-      "http://127.0.0.1:${port}/comfyui_mcp_panel/bridge_url" |
-      "${RUNTIME_PYTHON}" -c 'import json,os,sys; assert json.load(sys.stdin).get("url")==os.environ["HERMES_PANEL_BRIDGE_URL"]'; then
-    log "MCP Panel did not retain the advertised Hermes bridge URL."
+  if (( advertise_status != 0 )); then
+    log "MCP Panel did not retain the advertised Hermes bridge route."
     return 1
   fi
   log "Private WSS Hermes bridge advertised and verified without logging its capability token."
