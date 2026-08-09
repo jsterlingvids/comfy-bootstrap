@@ -116,6 +116,69 @@ class ImmutableGenerationPortTests(unittest.TestCase):
         self.assertIn("Generation activation failed and was rolled back.", self.onstart)
         self.assertIn("Using the custom-node manifest retained from the verified generation.", self.onstart)
 
+    def test_panel_release_pins_reject_mismatched_environment_overrides(self) -> None:
+        repository = "${SCRIPT_DIR}/vendor/comfyui-mcp-panel.bundle"
+        commit = "d559ba3611108c46e2fd115bdb3af2455455c5c7"
+        checksum = "cc52c27d966bf1bf35e2f3e81ac34f32db84eead01dc82c2261119bf657fe30e"
+        validator = "validate_mcp_panel_release_overrides() {" + self.onstart.split(
+            "validate_mcp_panel_release_overrides() {", 1
+        )[1].split("\n\nensure_mcp_panel_pinned() {", 1)[0]
+
+        for name, bad_value in (
+            ("MCP_PANEL_REPOSITORY", "/tmp/unreviewed-panel.bundle"),
+            ("MCP_PANEL_COMMIT", "0000000000000000000000000000000000000000"),
+            ("MCP_PANEL_BUNDLE_SHA256", "0" * 64),
+        ):
+            rejected = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    "set -Eeuo pipefail\n"
+                    "log() { :; }\n"
+                    f"SCRIPT_DIR=/immutable/template\n"
+                    f"readonly MCP_PANEL_RELEASE_REPOSITORY='{repository}'\n"
+                    f"readonly MCP_PANEL_RELEASE_COMMIT='{commit}'\n"
+                    f"readonly MCP_PANEL_RELEASE_BUNDLE_SHA256='{checksum}'\n"
+                    + validator
+                    + f"\n{name}='{bad_value}'\n"
+                    + "validate_mcp_panel_release_overrides\n",
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=10,
+            )
+            self.assertNotEqual(rejected.returncode, 0, rejected.stdout)
+
+        accepted = subprocess.run(
+            [
+                "bash",
+                "-c",
+                "set -Eeuo pipefail\n"
+                "log() { :; }\n"
+                f"SCRIPT_DIR=/immutable/template\n"
+                f"readonly MCP_PANEL_RELEASE_REPOSITORY='{repository}'\n"
+                f"readonly MCP_PANEL_RELEASE_COMMIT='{commit}'\n"
+                f"readonly MCP_PANEL_RELEASE_BUNDLE_SHA256='{checksum}'\n"
+                + validator
+                + f"\nMCP_PANEL_REPOSITORY='{repository}'\n"
+                + f"MCP_PANEL_COMMIT='{commit}'\n"
+                + f"MCP_PANEL_BUNDLE_SHA256='{checksum}'\n"
+                + "validate_mcp_panel_release_overrides\n",
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=10,
+        )
+        self.assertEqual(accepted.returncode, 0, accepted.stdout)
+        self.assertIn('readonly MCP_PANEL_RELEASE_REPOSITORY="${SCRIPT_DIR}/vendor/comfyui-mcp-panel.bundle"', self.onstart)
+        self.assertIn(f'readonly MCP_PANEL_RELEASE_COMMIT="{commit}"', self.onstart)
+        self.assertIn(f'readonly MCP_PANEL_RELEASE_BUNDLE_SHA256="{checksum}"', self.onstart)
+        self.assertNotIn('local panel_repo="${MCP_PANEL_REPOSITORY:-', self.onstart)
+        self.assertNotIn('local panel_commit="${MCP_PANEL_COMMIT:-', self.onstart)
+        self.assertNotIn('local panel_bundle_sha256="${MCP_PANEL_BUNDLE_SHA256:-', self.onstart)
+
     def test_panel_is_pinned_preserved_and_not_snapshotted(self) -> None:
         commit = "d559ba3611108c46e2fd115bdb3af2455455c5c7"
         bundle = REPO / "vendor/comfyui-mcp-panel.bundle"
@@ -138,6 +201,7 @@ class ImmutableGenerationPortTests(unittest.TestCase):
         self.assertIn(commit, self.onstart)
         self.assertIn("vendor/comfyui-mcp-panel.bundle", self.onstart)
         self.assertIn("Vendored MCP Panel bundle checksum mismatch.", self.onstart)
+        self.assertIn("Pinned MCP Panel checkout did not resolve to the reviewed commit.", self.onstart)
         self.assertIn("model_download_routes", self.onstart)
         self.assertIn("models_download", self.onstart)
         self.assertIn("graph_stage_input_video", self.onstart)

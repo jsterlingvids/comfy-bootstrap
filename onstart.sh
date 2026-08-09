@@ -33,6 +33,10 @@ fi
 readonly RUNTIME_PYTHON
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
+# Release template pins: these reviewed values are deliberately not configurable.
+readonly MCP_PANEL_RELEASE_REPOSITORY="${SCRIPT_DIR}/vendor/comfyui-mcp-panel.bundle"
+readonly MCP_PANEL_RELEASE_COMMIT="d559ba3611108c46e2fd115bdb3af2455455c5c7"
+readonly MCP_PANEL_RELEASE_BUNDLE_SHA256="cc52c27d966bf1bf35e2f3e81ac34f32db84eead01dc82c2261119bf657fe30e"
 # shellcheck source=lib/runtime-profile.sh
 source "${SCRIPT_DIR}/lib/runtime-profile.sh"
 # shellcheck source=lib/tailscale-private-comfy.sh
@@ -1289,10 +1293,27 @@ wait_for_comfy_listener() {
   done
 }
 
+validate_mcp_panel_release_overrides() {
+  if [[ -v MCP_PANEL_REPOSITORY && "${MCP_PANEL_REPOSITORY}" != "${MCP_PANEL_RELEASE_REPOSITORY}" ]]; then
+    log "MCP_PANEL_REPOSITORY must match the immutable reviewed MCP Panel release artifact."
+    return 1
+  fi
+  if [[ -v MCP_PANEL_COMMIT && "${MCP_PANEL_COMMIT}" != "${MCP_PANEL_RELEASE_COMMIT}" ]]; then
+    log "MCP_PANEL_COMMIT must match the immutable reviewed MCP Panel release artifact."
+    return 1
+  fi
+  if [[ -v MCP_PANEL_BUNDLE_SHA256 && "${MCP_PANEL_BUNDLE_SHA256}" != "${MCP_PANEL_RELEASE_BUNDLE_SHA256}" ]]; then
+    log "MCP_PANEL_BUNDLE_SHA256 must match the immutable reviewed MCP Panel release artifact."
+    return 1
+  fi
+}
+
 ensure_mcp_panel_pinned() {
-  local panel_repo="${MCP_PANEL_REPOSITORY:-${SCRIPT_DIR}/vendor/comfyui-mcp-panel.bundle}"
-  local panel_commit="${MCP_PANEL_COMMIT:-d559ba3611108c46e2fd115bdb3af2455455c5c7}"
-  local panel_bundle_sha256="${MCP_PANEL_BUNDLE_SHA256:-cc52c27d966bf1bf35e2f3e81ac34f32db84eead01dc82c2261119bf657fe30e}"
+  validate_mcp_panel_release_overrides || return 1
+
+  local panel_repo="${MCP_PANEL_RELEASE_REPOSITORY}"
+  local panel_commit="${MCP_PANEL_RELEASE_COMMIT}"
+  local panel_bundle_sha256="${MCP_PANEL_RELEASE_BUNDLE_SHA256}"
   local panel_dir="${CUSTOM_NODES_DIR}/comfyui-mcp-panel"
   local archive_dir=""
   archive_dir="${BOOTSTRAP_STATE_ROOT}/disabled-custom-nodes/comfyui-mcp-panel-$(date -u '+%Y%m%dT%H%M%SZ')"
@@ -1333,6 +1354,10 @@ ensure_mcp_panel_pinned() {
     git -C "${panel_dir}" fetch --depth 1 origin "${panel_commit}"
   fi
   git -C "${panel_dir}" checkout --detach "${panel_commit}"
+  if [[ "$(git -C "${panel_dir}" rev-parse HEAD 2>/dev/null || true)" != "${panel_commit}" ]]; then
+    log "Pinned MCP Panel checkout did not resolve to the reviewed commit."
+    return 1
+  fi
   if ! { [[ -f "${panel_dir}/__init__.py" && -f "${panel_dir}/web/js/comfyui-mcp-panel.js" ]] &&
     grep -Fq 'advertise_bridge' "${panel_dir}/__init__.py" &&
     grep -Fq 'bridge_url' "${panel_dir}/__init__.py" &&
