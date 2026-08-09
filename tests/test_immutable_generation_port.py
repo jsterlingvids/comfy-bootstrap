@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 import unittest
 import hashlib
+import os
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -221,10 +222,97 @@ class ImmutableGenerationPortTests(unittest.TestCase):
         self.assertIn("--no-access-log", lifecycle)
         self.assertIn("http://127.0.0.1:9177/healthz", health)
         self.assertIn("list_loopback_listening_pids_for_port 9177", lifecycle)
-        self.assertIn("Existing loopback bridge on port 9177 failed health verification.", lifecycle)
+        self.assertIn("Port 9177 is occupied by an unverified listener; refusing advertisement without disrupting it.", lifecycle)
+        self.assertIn("Managed Hermes bridge on port 9177 failed health verification.", lifecycle)
+        self.assertIn("HERMES_BRIDGE_IDENTITY_FILE", lifecycle)
+        self.assertIn("pid_matches_hermes_bridge", lifecycle)
         self.assertNotIn("kill -", lifecycle)
         self.assertNotIn("COMFY_STATE_ROOT", lifecycle)
         self.assertNotIn("rclone", lifecycle)
+
+    def test_bridge_identity_rejects_substitution_and_reuses_only_managed_listener(self) -> None:
+        """Exercise the identity decision helpers without opening a real listener."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            script = r'''
+set -Eeuo pipefail
+source "$REPO/onstart.sh"
+mkdir -p "$HERMES_BRIDGE_STATE_DIR"
+chmod 700 "$HERMES_BRIDGE_STATE_DIR"
+fake_listener() { echo "${FAKE_LISTENER:-}"; }
+list_listening_pids_for_port() { fake_listener; }
+list_loopback_listening_pids_for_port() { fake_listener; }
+
+# A real loopback endpoint can forge the expected health document, but it has
+# no protected bootstrap identity and therefore cannot be reused.
+python3 -c '
+from http.server import BaseHTTPRequestHandler, HTTPServer
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200); self.end_headers()
+        self.wfile.write(b"{\"ok\": true, \"service\": \"hermes-comfy-bridge\"}")
+    def log_message(self, *args): pass
+HTTPServer(("127.0.0.1", 9177), Handler).serve_forever()
+' &
+fake_pid=$!
+for _ in $(seq 1 20); do
+  curl -fsS --max-time 1 http://127.0.0.1:9177/healthz >/dev/null && break
+  sleep 0.05
+done
+if ! curl -fsS --max-time 1 http://127.0.0.1:9177/healthz >/dev/null; then
+  kill "$fake_pid" 2>/dev/null || true
+  wait "$fake_pid" 2>/dev/null || true
+  exit 77
+fi
+FAKE_LISTENER=$fake_pid
+verify_hermes_bridge_health
+! managed_hermes_bridge_listener_pid
+kill "$fake_pid"
+wait "$fake_pid" 2>/dev/null || true
+
+# A stale owned identity is removed only while the port is free.
+echo 999999 > "$HERMES_BRIDGE_IDENTITY_FILE"
+chmod 600 "$HERMES_BRIDGE_IDENTITY_FILE"
+FAKE_LISTENER=
+remove_hermes_bridge_identity_if_port_free
+[[ ! -e "$HERMES_BRIDGE_IDENTITY_FILE" ]]
+
+# A live record whose process has the wrong cwd/cmdline does not prove bridge
+# provenance (use a real non-uvicorn process rather than a mocked matcher).
+unset -f pid_matches_hermes_bridge
+sleep 30 &
+wrong_pid=$!
+echo "$wrong_pid" > "$HERMES_BRIDGE_IDENTITY_FILE"
+chmod 600 "$HERMES_BRIDGE_IDENTITY_FILE"
+! pid_matches_hermes_bridge "$wrong_pid"
+FAKE_LISTENER=$wrong_pid
+! managed_hermes_bridge_listener_pid
+kill "$wrong_pid"
+wait "$wrong_pid" 2>/dev/null || true
+FAKE_LISTENER=
+
+# A protected identity plus its exact managed listener PID is reusable on a
+# rerun; no health-only substitution is sufficient.
+pid_matches_hermes_bridge() { [[ "$1" == 4242 ]]; }
+echo 4242 > "$HERMES_BRIDGE_IDENTITY_FILE"
+chmod 600 "$HERMES_BRIDGE_IDENTITY_FILE"
+FAKE_LISTENER=4242
+managed_hermes_bridge_listener_pid | grep -Fx 4242
+'''
+            result = subprocess.run(
+                ["bash", "-c", script],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=15,
+                env={
+                    **os.environ,
+                    "REPO": str(REPO),
+                    "WORKSPACE_ROOT": temp_dir,
+                },
+            )
+            if result.returncode == 77:
+                self.skipTest("loopback port 9177 is already in use by an external process")
+            self.assertEqual(result.returncode, 0, result.stdout)
 
     def test_required_node_policy_and_live_registry_fail_closed(self) -> None:
         self.assertIn('local policy="${WORKFLOW_VALIDATION_POLICY:-required}"', self.onstart)

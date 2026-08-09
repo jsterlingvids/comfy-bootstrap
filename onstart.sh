@@ -27,6 +27,8 @@ readonly CODEX_HOME_DIR="${WORKSPACE_ROOT}/.codex"
 readonly BOOTSTRAP_STATE_ROOT="${WORKSPACE_ROOT}/.comfy-bootstrap-state"
 readonly HERMES_BRIDGE_DIR="${WORKSPACE_ROOT}/.hermes-comfy-bridge"
 readonly HERMES_BRIDGE_LOG="${WORKSPACE_ROOT}/hermes-comfy-bridge.log"
+readonly HERMES_BRIDGE_STATE_DIR="${BOOTSTRAP_STATE_ROOT}/hermes-comfy-bridge"
+readonly HERMES_BRIDGE_IDENTITY_FILE="${HERMES_BRIDGE_STATE_DIR}/listener.pid"
 readonly DEFAULT_COMFY_PORT="8188"
 RUNTIME_PYTHON=python3
 if [[ -x /opt/conda/bin/python3 ]]; then
@@ -575,6 +577,7 @@ initialize_paths() {
 ensure_directories() {
   mkdir -p "${BOOTSTRAP_ROOT}"
   mkdir -p "${STATE_DIR}"
+  chmod 700 "${STATE_DIR}"
   mkdir -p "${CUSTOM_NODES_DIR}" "${WORKFLOWS_DIR}"
   mkdir -p "${COMFY_ROOT}/web/extensions"
   mkdir -p "${COMFY_ROOT}/web/extensions/pysssss"
@@ -1386,12 +1389,87 @@ verify_hermes_bridge_health() {
     "${RUNTIME_PYTHON}" -c 'import json,sys; value=json.load(sys.stdin); assert value == {"ok": True, "service": "hermes-comfy-bridge"}'
 }
 
+prepare_hermes_bridge_identity_state() {
+  # This directory is local bootstrap state, not shared snapshot state.  It
+  # contains only a PID, but must not be replaceable by another local user.
+  [[ ! -L "${BOOTSTRAP_STATE_ROOT}" && ! -L "${HERMES_BRIDGE_STATE_DIR}" ]] || return 1
+  install -d -m 700 "${BOOTSTRAP_STATE_ROOT}" "${HERMES_BRIDGE_STATE_DIR}"
+  [[ -O "${BOOTSTRAP_STATE_ROOT}" && -O "${HERMES_BRIDGE_STATE_DIR}" ]] || return 1
+  [[ "$(stat -c '%a' "${BOOTSTRAP_STATE_ROOT}")" == "700" ]] || return 1
+  [[ "$(stat -c '%a' "${HERMES_BRIDGE_STATE_DIR}")" == "700" ]] || return 1
+}
+
+read_hermes_bridge_identity_pid() {
+  local pid="" extra=""
+
+  [[ -e "${HERMES_BRIDGE_IDENTITY_FILE}" ]] || return 1
+  [[ -f "${HERMES_BRIDGE_IDENTITY_FILE}" && ! -L "${HERMES_BRIDGE_IDENTITY_FILE}" && -O "${HERMES_BRIDGE_IDENTITY_FILE}" ]] || return 1
+  [[ "$(stat -c '%a' "${HERMES_BRIDGE_IDENTITY_FILE}")" == "600" ]] || return 1
+  IFS= read -r pid < "${HERMES_BRIDGE_IDENTITY_FILE}" || return 1
+  IFS= read -r extra < <(tail -n +2 "${HERMES_BRIDGE_IDENTITY_FILE}") || true
+  [[ "${pid}" =~ ^[1-9][0-9]*$ && -z "${extra}" ]] || return 1
+  printf '%s\n' "${pid}"
+}
+
+remove_hermes_bridge_identity_if_port_free() {
+  [[ -z "$(list_listening_pids_for_port 9177)" ]] || return 1
+  [[ -e "${HERMES_BRIDGE_IDENTITY_FILE}" ]] || return 0
+  [[ -f "${HERMES_BRIDGE_IDENTITY_FILE}" && ! -L "${HERMES_BRIDGE_IDENTITY_FILE}" && -O "${HERMES_BRIDGE_IDENTITY_FILE}" ]] || return 1
+  rm -f -- "${HERMES_BRIDGE_IDENTITY_FILE}"
+}
+
+pid_matches_hermes_bridge() {
+  local pid="$1" cwd="" process_executable="" expected_executable=""
+  local -a cmdline=()
+  local -a expected=(
+    "${RUNTIME_PYTHON}" -m uvicorn hermes_comfy_bridge.app:app
+    --host 127.0.0.1 --port 9177 --ws-max-size 67108864
+    --no-access-log --log-level warning
+  )
+  local index=""
+
+  [[ "${pid}" =~ ^[1-9][0-9]*$ && -r "/proc/${pid}/cmdline" && -L "/proc/${pid}/cwd" && -L "/proc/${pid}/exe" ]] || return 1
+  cwd="$(readlink -f "/proc/${pid}/cwd" 2>/dev/null || true)"
+  process_executable="$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)"
+  expected_executable="$(readlink -f "$(command -v "${RUNTIME_PYTHON}")" 2>/dev/null || true)"
+  [[ "${cwd}" == "${HERMES_BRIDGE_DIR}" && -n "${expected_executable}" && "${process_executable}" == "${expected_executable}" ]] || return 1
+  mapfile -d '' -t cmdline < "/proc/${pid}/cmdline" || return 1
+  [[ ${#cmdline[@]} -eq ${#expected[@]} ]] || return 1
+  [[ "$(readlink -f "${cmdline[0]}" 2>/dev/null || true)" == "${expected_executable}" ]] || return 1
+  for index in "${!expected[@]}"; do
+    [[ "${cmdline[index]}" == "${expected[index]}" ]] || return 1
+  done
+}
+
+managed_hermes_bridge_listener_pid() {
+  local identity_pid="" listener_pids="" loopback_pids=""
+
+  identity_pid="$(read_hermes_bridge_identity_pid || true)"
+  [[ -n "${identity_pid}" ]] || return 1
+  pid_matches_hermes_bridge "${identity_pid}" || return 1
+  listener_pids="$(list_listening_pids_for_port 9177 | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+  loopback_pids="$(list_loopback_listening_pids_for_port 9177 | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+  [[ "${listener_pids}" == "${identity_pid}" && "${loopback_pids}" == "${identity_pid}" ]] || return 1
+  printf '%s\n' "${identity_pid}"
+}
+
+write_hermes_bridge_identity() {
+  local pid="$1" identity_stage=""
+
+  prepare_hermes_bridge_identity_state || return 1
+  identity_stage="$(mktemp "${HERMES_BRIDGE_STATE_DIR}/listener.pid.XXXXXX")" || return 1
+  chmod 600 "${identity_stage}"
+  printf '%s\n' "${pid}" > "${identity_stage}"
+  mv -f -- "${identity_stage}" "${HERMES_BRIDGE_IDENTITY_FILE}"
+  chmod 600 "${HERMES_BRIDGE_IDENTITY_FILE}"
+}
+
 ensure_hermes_comfy_bridge() {
   local bridge_bundle="${SCRIPT_DIR}/vendor/hermes-comfy-bridge.bundle"
   local bridge_bundle_sha256="3d59f0efce97fe29201bc5258d3a917b395352eb354f0ba581d383c5c53a35fc"
   local bridge_commit="44a553db20fb4d5e007ea5b29bc95691de1cfa1e"
   local archive_dir="${BOOTSTRAP_STATE_ROOT}/disabled-host-bridges/hermes-comfy-bridge-$(date -u '+%Y%m%dT%H%M%SZ')"
-  local listener_pids=""
+  local listener_pids="" identity_pid="" launch_pid=""
 
   validate_hermes_bridge_runtime_config || return 1
   [[ -f "${bridge_bundle}" ]] || { log "Vendored Hermes bridge bundle is missing."; return 1; }
@@ -1427,15 +1505,25 @@ ensure_hermes_comfy_bridge() {
     return 1
   }
 
+  prepare_hermes_bridge_identity_state || { log "Hermes bridge identity state is not securely bootstrap-owned."; return 1; }
   listener_pids="$(list_listening_pids_for_port 9177 | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
   if [[ -n "${listener_pids}" ]]; then
-    [[ "$(list_loopback_listening_pids_for_port 9177 | tr '\n' ' ' | sed 's/[[:space:]]*$//')" == "${listener_pids}" ]] || {
-      log "Hermes bridge port 9177 is not exclusively loopback-bound."
-      return 1
-    }
-    verify_hermes_bridge_health || { log "Existing loopback bridge on port 9177 failed health verification."; return 1; }
-    log "Verified existing private Hermes bridge on loopback."
+    identity_pid="$(managed_hermes_bridge_listener_pid || true)"
+    [[ -n "${identity_pid}" ]] || { log "Port 9177 is occupied by an unverified listener; refusing advertisement without disrupting it."; return 1; }
+    verify_hermes_bridge_health || { log "Managed Hermes bridge on port 9177 failed health verification."; return 1; }
+    log "Verified bootstrap-managed private Hermes bridge on loopback."
     return 0
+  fi
+
+  identity_pid="$(read_hermes_bridge_identity_pid || true)"
+  if [[ -n "${identity_pid}" ]]; then
+    if [[ -d "/proc/${identity_pid}" ]]; then
+      log "Hermes bridge identity names a live process that is not the expected listener; refusing replacement."
+      return 1
+    fi
+    remove_hermes_bridge_identity_if_port_free || { log "Unable to safely clear stale Hermes bridge identity."; return 1; }
+  elif [[ -e "${HERMES_BRIDGE_IDENTITY_FILE}" ]]; then
+    remove_hermes_bridge_identity_if_port_free || { log "Hermes bridge identity record is unsafe; refusing replacement."; return 1; }
   fi
 
   umask 077
@@ -1447,13 +1535,15 @@ ensure_hermes_comfy_bridge() {
     nohup "${RUNTIME_PYTHON}" -m uvicorn hermes_comfy_bridge.app:app \
       --host 127.0.0.1 --port 9177 --ws-max-size 67108864 --no-access-log --log-level warning \
       >>"${HERMES_BRIDGE_LOG}" 2>&1 </dev/null &
+  launch_pid="$!"
   for _ in $(seq 1 20); do
-    if verify_hermes_bridge_health; then
-      [[ -n "$(list_loopback_listening_pids_for_port 9177)" ]] || { log "Hermes bridge health was not loopback-bound."; return 1; }
-      [[ -z "$(comm -23 <(list_listening_pids_for_port 9177) <(list_loopback_listening_pids_for_port 9177))" ]] || {
-        log "Hermes bridge listener escaped loopback."
-        return 1
-      }
+    if pid_matches_hermes_bridge "${launch_pid}" &&
+       [[ "$(managed_hermes_bridge_listener_pid || true)" == "" ]] &&
+       [[ "$(list_listening_pids_for_port 9177 | tr '\n' ' ' | sed 's/[[:space:]]*$//')" == "${launch_pid}" ]] &&
+       [[ "$(list_loopback_listening_pids_for_port 9177 | tr '\n' ' ' | sed 's/[[:space:]]*$//')" == "${launch_pid}" ]] &&
+       verify_hermes_bridge_health; then
+      write_hermes_bridge_identity "${launch_pid}" || { log "Could not persist bootstrap-managed Hermes bridge identity."; return 1; }
+      [[ "$(managed_hermes_bridge_listener_pid || true)" == "${launch_pid}" ]] || { log "Persisted Hermes bridge identity did not verify."; return 1; }
       log "Private Hermes bridge is healthy on loopback."
       return 0
     fi
@@ -1782,4 +1872,6 @@ main() {
   start_autosave_loop
   log "Bootstrap complete."
 }
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
