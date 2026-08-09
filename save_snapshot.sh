@@ -101,7 +101,17 @@ freeze_state() {
   rclone_run sync "${WORKFLOWS_DIR}" "${STAGE_ROOT}/workflows" --check-first --create-empty-src-dirs
   rclone_run sync "${CUSTOM_NODES_DIR}" "${STAGE_ROOT}/custom_nodes" --check-first --create-empty-src-dirs "${CUSTOM_NODES_RCLONE_ARGS[@]}"
   [[ ! -f "${COMFY_ROOT}/extra_model_paths.yaml" ]] || install -m 0644 "${COMFY_ROOT}/extra_model_paths.yaml" "${STAGE_ROOT}/settings/extra_model_paths.yaml"
-  [[ ! -f "${COMFY_ROOT}/user/default/comfy.settings.json" ]] || install -m 0644 "${COMFY_ROOT}/user/default/comfy.settings.json" "${STAGE_ROOT}/settings/comfy.settings.json"
+  if [[ -f "${COMFY_ROOT}/user/default/comfy.settings.json" ]]; then
+    # Stage an object-validated scrubbed copy; never mutate the live settings file.
+    python3 "${BOOTSTRAP_ROOT}/panel_bridge_policy.py" stage \
+      "${COMFY_ROOT}/user/default/comfy.settings.json" \
+      "${STAGE_ROOT}/settings/comfy.settings.json" \
+      "${STAGE_ROOT}/settings/panel-bridge-policy.json"
+  else
+    python3 "${BOOTSTRAP_ROOT}/panel_bridge_policy.py" stage \
+      <(printf '{}\n') "${STAGE_ROOT}/settings/comfy.settings.json" \
+      "${STAGE_ROOT}/settings/panel-bridge-policy.json"
+  fi
   [[ ! -f "${COMFY_ROOT}/user/default/ComfyUI-Manager/config.ini" ]] || install -m 0644 "${COMFY_ROOT}/user/default/ComfyUI-Manager/config.ini" "${STAGE_ROOT}/settings/ComfyUI-Manager-config.ini"
   [[ ! -f "${COMFY_ROOT}/user/__manager/config.ini" ]] || install -m 0644 "${COMFY_ROOT}/user/__manager/config.ini" "${STAGE_ROOT}/settings/manager-config.ini"
   build_live_manifest

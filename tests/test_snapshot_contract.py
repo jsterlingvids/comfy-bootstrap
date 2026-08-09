@@ -20,6 +20,7 @@ from snapshot_contract import (
     validate_manifest,
     verify_stage,
 )
+from panel_bridge_policy import POLICY, POLICY_FILENAME, PolicyError, apply_policy, stage_settings, validate_policy
 
 GENERATION = "20260807T010203Z-012345abcdef"
 
@@ -35,6 +36,7 @@ def make_stage(root: Path) -> Path:
     (stage / "custom_nodes/example").mkdir(parents=True)
     (stage / "workflows/new.json").write_text('{"new":true}\n')
     (stage / "settings/comfy.settings.json").write_text('{"theme":"dark"}\n')
+    (stage / "settings" / POLICY_FILENAME).write_text(json.dumps(POLICY, sort_keys=True) + "\n")
     (stage / "custom_nodes/example/node.py").write_text("VALUE = 1\n")
     (stage / "custom_nodes_manifest.txt").write_text("https://example.invalid/example.git\n")
     create_manifest(stage, GENERATION, "runpod", "deadbeef", stage / "snapshot.manifest.json")
@@ -111,8 +113,8 @@ class SnapshotContractTests(unittest.TestCase):
             stage = make_stage(Path(temp))
             value = json.loads((stage / "snapshot.manifest.json").read_text())
             expected_size = (stage / "settings/comfy.settings.json").stat().st_size
-            self.assertEqual(value["surfaces"]["settings"]["files"], 1)
-            self.assertEqual(value["surfaces"]["settings"]["bytes"], expected_size)
+            self.assertEqual(value["surfaces"]["settings"]["files"], 2)
+            self.assertGreater(value["surfaces"]["settings"]["bytes"], expected_size)
             self.assertEqual(value["surfaces"]["custom_nodes_manifest"]["files"], 1)
 
     def test_tampered_or_partial_generation_is_rejected(self) -> None:
@@ -138,6 +140,57 @@ class SnapshotContractTests(unittest.TestCase):
                 verify_stage(stage, stage / "snapshot.manifest.json")
 
 
+class PanelBridgePolicyTests(unittest.TestCase):
+    def test_policy_is_required_and_malformed_marker_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            stage = make_stage(Path(temp))
+            policy = stage / "settings" / POLICY_FILENAME
+            policy.write_text('{"schema":"wrong"}\n')
+            create_manifest(stage, GENERATION, "runpod", "deadbeef", stage / "snapshot.manifest.json")
+            with self.assertRaises(ContractError):
+                verify_stage(stage, stage / "snapshot.manifest.json")
+
+    def test_stage_scrubs_current_and_legacy_prefixes_without_mutating_live_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            live, staged, marker = root / "live.json", root / "stage.json", root / POLICY_FILENAME
+            original = {
+                "theme": "dark",
+                "comfyui-mcp.bridgeUrl.single": "private",
+                "comfyui-mcp.bridgeUrl.codex": "legacy",
+                "comfyui-mcp.panel.bridgeUrl": "older",
+            }
+            live.write_text(json.dumps(original))
+            stage_settings(live, staged, marker)
+            self.assertEqual(json.loads(live.read_text()), original)
+            self.assertEqual(json.loads(staged.read_text()), {"theme": "dark"})
+            self.assertEqual(validate_policy(marker), POLICY)
+
+    def test_apply_removes_stale_keys_after_restore_and_preserves_unrelated_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            settings, marker = root / "comfy.settings.json", root / POLICY_FILENAME
+            marker.write_text(json.dumps(POLICY))
+            settings.write_text(json.dumps({
+                "theme": "dark", "comfyui-mcp.bridgeUrl": "legacy",
+                "comfyui-mcp.bridgeUrl.single": "current", "comfyui-mcp.bridgeUrl.future": "future",
+                "comfyui-mcp.panel.bridgeUrl": "older",
+            }))
+            self.assertTrue(apply_policy(settings, marker))
+            self.assertEqual(json.loads(settings.read_text()), {"theme": "dark"})
+
+    def test_malformed_marker_rejects_without_touching_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            settings, marker = root / "comfy.settings.json", root / POLICY_FILENAME
+            original = {"theme": "dark", "comfyui-mcp.bridgeUrl.single": "stale"}
+            settings.write_text(json.dumps(original))
+            marker.write_text('{"schema":"bad"}')
+            with self.assertRaises(PolicyError):
+                apply_policy(settings, marker)
+            self.assertEqual(json.loads(settings.read_text()), original)
+
+
 class SnapshotActivationTests(unittest.TestCase):
     def make_comfy(self, root: Path) -> Path:
         comfy = root / "ComfyUI"
@@ -160,6 +213,19 @@ class SnapshotActivationTests(unittest.TestCase):
             self.assertTrue((comfy / "custom_nodes/example/node.py").is_file())
             self.assertEqual((comfy / "custom_nodes/comfyui-mcp-panel/.git/HEAD").read_text(), "pinned\n")
             self.assertEqual((comfy / "user/default/comfy.settings.json").read_text(), '{"theme":"dark"}\n')
+
+    def test_generation_activation_applies_policy_after_settings_restore(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            stage = make_stage(root)
+            (stage / "settings/comfy.settings.json").write_text(json.dumps({
+                "theme": "dark", "comfyui-mcp.bridgeUrl.single": "stale",
+                "comfyui-mcp.bridgeUrl.legacy": "older",
+            }))
+            create_manifest(stage, GENERATION, "runpod", "deadbeef", stage / "snapshot.manifest.json")
+            comfy = self.make_comfy(root)
+            activate(stage, stage / "snapshot.manifest.json", comfy)
+            self.assertEqual(json.loads((comfy / "user/default/comfy.settings.json").read_text()), {"theme": "dark"})
 
     def test_injected_failure_rolls_back_every_applied_surface(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

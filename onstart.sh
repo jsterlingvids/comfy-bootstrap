@@ -644,7 +644,7 @@ restore_workflows() {
 }
 
 restore_settings() {
-  local remote_file local_file
+  local remote_file local_file candidate policy_stage
   local -a state_files=(
     "extra_model_paths.yaml:${COMFY_ROOT}/extra_model_paths.yaml"
     "comfy.settings.json:${COMFY_ROOT}/user/default/comfy.settings.json"
@@ -652,17 +652,40 @@ restore_settings() {
     "manager-config.ini:${COMFY_ROOT}/user/__manager/config.ini"
   )
 
+  # Validate the immutable policy before downloading any candidate that could
+  # overwrite a local setting. Never print policy or settings contents.
+  policy_stage="$(mktemp "${WORKSPACE_ROOT}/.panel-bridge-policy.XXXXXX")"
+  if ! rclone_bounded 35 copyto "${REMOTE_SETTINGS}/panel-bridge-policy.json" "${policy_stage}" ||
+     ! "${RUNTIME_PYTHON}" "${SCRIPT_DIR}/panel_bridge_policy.py" validate "${policy_stage}"; then
+    rm -f "${policy_stage}"
+    log "Panel bridge policy unavailable or invalid; preserving local settings."
+    return 0
+  fi
+
   log "Restoring ComfyUI and Manager settings from Backblaze B2."
   for state_file in "${state_files[@]}"; do
     remote_file="${REMOTE_SETTINGS}/${state_file%%:*}"
     local_file="${state_file#*:}"
     mkdir -p "$(dirname "${local_file}")"
-    if rclone_bounded 35 copyto "${remote_file}" "${local_file}"; then
+    candidate="$(mktemp "$(dirname "${local_file}")/.${state_file%%:*}.XXXXXX")"
+    if rclone_bounded 35 copyto "${remote_file}" "${candidate}" &&
+       { [[ "${state_file%%:*}" != "comfy.settings.json" ]] || "${RUNTIME_PYTHON}" "${SCRIPT_DIR}/panel_bridge_policy.py" apply "${candidate}" "${policy_stage}"; }; then
+      install -m 0644 "${candidate}" "${local_file}"
       log "Restored setting: ${state_file%%:*}"
     else
       log "Setting unavailable; preserving local/default value: ${state_file%%:*}"
     fi
+    rm -f "${candidate}"
   done
+  # Apply after every legacy settings restore path so no stale manual key can
+  # reappear through restore ordering. A malformed live object is left intact.
+  if ! "${RUNTIME_PYTHON}" "${SCRIPT_DIR}/panel_bridge_policy.py" apply \
+      "${COMFY_ROOT}/user/default/comfy.settings.json" "${policy_stage}"; then
+    rm -f "${policy_stage}"
+    log "Panel bridge policy application failed; preserving unrelated settings."
+    return 1
+  fi
+  rm -f "${policy_stage}"
 }
 
 restore_custom_nodes_snapshot() {

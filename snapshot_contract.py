@@ -11,6 +11,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from panel_bridge_policy import POLICY_FILENAME, PolicyError, validate_policy
+
 GENERATION_RE = re.compile(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}")
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
 SURFACE_PATHS = {
@@ -182,6 +184,10 @@ def verify_stage(stage_root: str | Path, manifest_path: str | Path) -> dict[str,
     generation = validate_generation_id(value.get("generation"))
     raw = Path(manifest_path).read_bytes()
     validate_manifest(manifest_path, generation, hashlib.sha256(raw).hexdigest())
+    try:
+        validate_policy(Path(stage_root) / "settings" / POLICY_FILENAME)
+    except PolicyError as exc:
+        raise ContractError("invalid panel bridge policy") from exc
     measured = measure_stage(stage_root)
     if measured != value["surfaces"]:
         raise ContractError("staged snapshot content does not match manifest")

@@ -68,7 +68,7 @@ class SaveSnapshotIntegrationTests(unittest.TestCase):
         (self.comfy / "custom_nodes/example/node.py").write_text("VALUE=1\n")
         self.bootstrap = self.root / "bootstrap"
         self.bootstrap.mkdir()
-        for name in ("save_snapshot.sh", "snapshot_contract.py", "generate_manifest.sh", "custom_nodes_manifest.txt"):
+        for name in ("save_snapshot.sh", "snapshot_contract.py", "panel_bridge_policy.py", "generate_manifest.sh", "custom_nodes_manifest.txt"):
             shutil.copy2(REPO / name, self.bootstrap / name)
         self.bin = self.root / "bin"
         self.bin.mkdir()
@@ -120,6 +120,27 @@ class SaveSnapshotIntegrationTests(unittest.TestCase):
             ["python3", str(self.bootstrap / "snapshot_contract.py"), "verify-stage", str(generation_root), str(generation_root / "snapshot.manifest.json")],
             check=True,
         )
+
+    def test_settings_snapshot_scrubs_overrides_without_mutating_live_file(self) -> None:
+        settings = self.comfy / "user/default/comfy.settings.json"
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        live = {
+            "Comfy.Theme": "dark",
+            "comfyui-mcp.bridgeUrl.single": "private-current",
+            "comfyui-mcp.bridgeUrl.codex": "private-legacy",
+            "comfyui-mcp.panel.bridgeUrl": "private-older",
+        }
+        settings.write_text(json.dumps(live, sort_keys=True))
+        result = self.run_save()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(json.loads(settings.read_text()), live)
+        generation_settings = self.remote / "generations" / GENERATION / "settings"
+        self.assertEqual(json.loads((generation_settings / "comfy.settings.json").read_text()), {"Comfy.Theme": "dark"})
+        self.assertEqual(json.loads((generation_settings / "panel-bridge-policy.json").read_text()), {
+            "schema": "comfy-panel-bridge-policy-v1",
+            "advertised_bridge_discovery": "current-instance",
+            "manual_bridge_override": "clear",
+        })
 
     def test_writer_identity_and_generation_are_fail_closed(self) -> None:
         missing = self.run_save(SNAPSHOT_WRITER_ID="")

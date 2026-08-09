@@ -9,6 +9,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from panel_bridge_policy import POLICY_FILENAME, PolicyError, apply_policy, validate_policy
 from snapshot_contract import verify_stage
 
 SETTINGS = {
@@ -68,6 +69,11 @@ def activate(stage_root: str | Path, manifest_path: str | Path, comfy_root: str 
     stage = Path(stage_root).resolve()
     comfy = Path(comfy_root).resolve()
     verify_stage(stage, manifest_path)
+    policy = stage / "settings" / POLICY_FILENAME
+    try:
+        validate_policy(policy)
+    except PolicyError as exc:
+        raise ActivationError("invalid panel bridge policy") from exc
     if not (comfy / "main.py").is_file():
         raise ActivationError(f"invalid ComfyUI root: {comfy}")
 
@@ -135,6 +141,10 @@ def activate(stage_root: str | Path, manifest_path: str | Path, comfy_root: str 
             else:
                 applied_files.append((live, None))
             os.replace(candidate, live)
+            if remote_name == "comfy.settings.json":
+                # Apply after replacement while this file remains within the
+                # activation transaction and its rollback coverage.
+                apply_policy(live, policy)
             operations += 1
             if fail_after and operations >= fail_after:
                 raise ActivationError("injected activation failure")
