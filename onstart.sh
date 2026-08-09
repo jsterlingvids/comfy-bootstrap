@@ -1291,8 +1291,8 @@ wait_for_comfy_listener() {
 
 ensure_mcp_panel_pinned() {
   local panel_repo="${MCP_PANEL_REPOSITORY:-${SCRIPT_DIR}/vendor/comfyui-mcp-panel.bundle}"
-  local panel_commit="${MCP_PANEL_COMMIT:-50f94c32d1d36171dd4b6122c8585eea308c7317}"
-  local panel_bundle_sha256="${MCP_PANEL_BUNDLE_SHA256:-2e7c0987a3a228109b38c49a5fa5987726537cca4c12554fe8cbbebefc510a6b}"
+  local panel_commit="${MCP_PANEL_COMMIT:-d559ba3611108c46e2fd115bdb3af2455455c5c7}"
+  local panel_bundle_sha256="${MCP_PANEL_BUNDLE_SHA256:-cc52c27d966bf1bf35e2f3e81ac34f32db84eead01dc82c2261119bf657fe30e}"
   local panel_dir="${CUSTOM_NODES_DIR}/comfyui-mcp-panel"
   local archive_dir=""
   archive_dir="${BOOTSTRAP_STATE_ROOT}/disabled-custom-nodes/comfyui-mcp-panel-$(date -u '+%Y%m%dT%H%M%SZ')"

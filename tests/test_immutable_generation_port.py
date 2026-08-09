@@ -117,11 +117,11 @@ class ImmutableGenerationPortTests(unittest.TestCase):
         self.assertIn("Using the custom-node manifest retained from the verified generation.", self.onstart)
 
     def test_panel_is_pinned_preserved_and_not_snapshotted(self) -> None:
-        commit = "50f94c32d1d36171dd4b6122c8585eea308c7317"
+        commit = "d559ba3611108c46e2fd115bdb3af2455455c5c7"
         bundle = REPO / "vendor/comfyui-mcp-panel.bundle"
         self.assertEqual(
             hashlib.sha256(bundle.read_bytes()).hexdigest(),
-            "2e7c0987a3a228109b38c49a5fa5987726537cca4c12554fe8cbbebefc510a6b",
+            "cc52c27d966bf1bf35e2f3e81ac34f32db84eead01dc82c2261119bf657fe30e",
         )
         verified = subprocess.run(
             ["git", "bundle", "verify", str(bundle)],
@@ -150,11 +150,11 @@ class ImmutableGenerationPortTests(unittest.TestCase):
         self.assertIn('PRESERVED_BAKED_NODES = ("comfyui-mcp-panel",)', activate)
 
     def test_bridge_is_mandatory_wss_and_read_back(self) -> None:
-        bridge_commit = "fd95f9361f9aa676b2fcb53f1a6024e64037db70"
+        bridge_commit = "44a553db20fb4d5e007ea5b29bc95691de1cfa1e"
         bridge_bundle = REPO / "vendor/hermes-comfy-bridge.bundle"
         self.assertEqual(
             hashlib.sha256(bridge_bundle.read_bytes()).hexdigest(),
-            "385dfe7986db1b6101955e31461ff545e35d646c97649a2b0970725118b605a2",
+            "3d59f0efce97fe29201bc5258d3a917b395352eb354f0ba581d383c5c53a35fc",
         )
         verified = subprocess.run(
             ["git", "bundle", "verify", str(bridge_bundle)],
