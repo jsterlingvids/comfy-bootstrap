@@ -10,7 +10,7 @@ This repository bootstraps the existing ComfyUI installation in `vastai/comfy`, 
 - Vast does not autosave unless both `SNAPSHOT_WRITER=1` and a unique `SNAPSHOT_WRITER_ID` are supplied. Do not authorize two providers/instances at once; stop the old writer before handing publication to a new one.
 - Codex state is provider-local by default at `myb2:comfy-provider-local/vast/codex-home`. Codex/provider credentials are not part of shared Comfy generations.
 - The MCP Panel is not mutable shared state. Bootstrap preserves and pins `comfyui-mcp-panel` at `d559ba3611108c46e2fd115bdb3af2455455c5c7` and disables Panel backend autospawn.
-- The host-side Hermes bridge is separate from B2 snapshot state. Bootstrap checksum-verifies and consumes `vendor/hermes-comfy-bridge.bundle`, checks out `44a553db20fb4d5e007ea5b29bc95691de1cfa1e`, verifies its hardened subprotocol/query-token source markers, and starts it only on `127.0.0.1:9177`. It verifies local `/healthz` before advertising the external WSS URL.
+- The Hermes bridge is an external companion service on the durable local Hermes host (currently `openclawv03.tail…:9177`), not a process inside a disposable Vast GPU box. Vast only advertises its runtime-provided endpoint to the MCP Panel; it never installs, starts, monitors, or persists a bridge.
 
 ## Required configuration
 
@@ -18,8 +18,7 @@ Set before `onstart.sh` runs:
 
 - `B2_ACCOUNT_ID`
 - `B2_APP_KEY`
-- `HERMES_PANEL_BRIDGE_URL` — required, non-empty `wss://` URL; bootstrap advertises it to Panel and verifies readback without logging its capability token
-- `HERMES_COMFY_BRIDGE_TOKEN` and `HERMES_COMFY_PANEL_WS_TOKEN` — required runtime-supplied bridge secrets. Bootstrap never creates, rewrites, snapshots, or logs them. The advertised URL must be `wss://<tailnet-host>/bridge#hermes-comfy-bridge.v1.<base64url-ws-token>` with no query string.
+- `HERMES_PANEL_BRIDGE_URL` — required runtime-provided `wss://` URL with a non-empty fragment capability and no query string. Bootstrap advertises it to Panel and verifies readback without logging or persisting it. It must target the external durable Hermes companion service.
 
 Common optional configuration:
 
@@ -40,7 +39,7 @@ The clean `vastai/comfy:v0.27.0-cuda-12.9-py312` base does not provide the appro
 3. Restore only an explicitly allowed legacy snapshot when migrating.
 4. Reconcile the verified generation manifest with the required repository baseline.
 5. Preserve/pin MCP Panel and ensure Manager v4.
-6. Start or safely reuse loopback ComfyUI, start private Tailscale ingress, install/reuse the verified loopback-only Hermes bridge, verify `/healthz`, then advertise/read back its WSS URL.
+6. Start or safely reuse loopback ComfyUI, start private Tailscale ingress, then advertise/read back the external Hermes companion's WSS capability URL.
 7. Run constrained requirements/install hooks, recheck the exact runtime, restart only while idle, and re-advertise the bridge.
 8. Validate live node acceptance under the required policy.
 9. Start autosave only on an explicitly authorized writer; readers log that autosave is disabled.

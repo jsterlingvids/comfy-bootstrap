@@ -66,7 +66,7 @@ The old mutable layout at `COMFY_STATE_ROOT/{workflows,settings,custom_nodes}` i
 
 ## Runtime acceptance
 
-Bootstrap requires a non-empty `wss://` `HERMES_PANEL_BRIDGE_URL`, advertises it to pinned MCP Panel, and verifies readback without logging the URL. The bridge is re-advertised after an idle restart.
+Bootstrap requires a runtime-provided `HERMES_PANEL_BRIDGE_URL` with a `wss://` endpoint, non-empty fragment capability, and no query string. It advertises that external durable Hermes companion endpoint to pinned MCP Panel and verifies readback without logging or persisting the URL. Vast never installs, starts, monitors, or manages the bridge; it is re-advertised after an idle restart.
 
 `WORKFLOW_VALIDATION_POLICY` defaults to `required`:
 
