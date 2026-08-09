@@ -151,10 +151,11 @@ class ImmutableGenerationPortTests(unittest.TestCase):
 
     def test_bridge_is_mandatory_wss_and_read_back(self) -> None:
         bridge_commit = "44a553db20fb4d5e007ea5b29bc95691de1cfa1e"
+        bridge_sha256 = "3d59f0efce97fe29201bc5258d3a917b395352eb354f0ba581d383c5c53a35fc"
         bridge_bundle = REPO / "vendor/hermes-comfy-bridge.bundle"
         self.assertEqual(
             hashlib.sha256(bridge_bundle.read_bytes()).hexdigest(),
-            "3d59f0efce97fe29201bc5258d3a917b395352eb354f0ba581d383c5c53a35fc",
+            bridge_sha256,
         )
         verified = subprocess.run(
             ["git", "bundle", "verify", str(bridge_bundle)],
@@ -173,6 +174,57 @@ class ImmutableGenerationPortTests(unittest.TestCase):
         self.assertIn("/comfyui_mcp_panel/advertise_bridge", self.onstart)
         self.assertIn("/comfyui_mcp_panel/bridge_url", self.onstart)
         self.assertGreaterEqual(self.onstart.count("advertise_hermes_bridge"), 3)
+
+    def test_bridge_bundle_is_consumed_by_a_pinned_private_lifecycle(self) -> None:
+        bridge_commit = "44a553db20fb4d5e007ea5b29bc95691de1cfa1e"
+        bridge_sha256 = "3d59f0efce97fe29201bc5258d3a917b395352eb354f0ba581d383c5c53a35fc"
+        lifecycle = "ensure_hermes_comfy_bridge() {" + self.onstart.split(
+            "ensure_hermes_comfy_bridge() {", 1
+        )[1].split("\n\nensure_comfyui_manager_v4() {", 1)[0]
+        source_verify = "verify_hermes_bridge_source() {" + self.onstart.split(
+            "verify_hermes_bridge_source() {", 1
+        )[1].split("\n\nvalidate_hermes_bridge_runtime_config() {", 1)[0]
+        main = "main() {" + self.onstart.split("main() {", 1)[1]
+
+        # A release with a verified bundle but no startup consumer is invalid.
+        self.assertTrue((REPO / "vendor/hermes-comfy-bridge.bundle").is_file())
+        self.assertIn("ensure_hermes_comfy_bridge", main)
+        self.assertLess(main.index("ensure_hermes_comfy_bridge"), main.index("advertise_hermes_bridge"))
+        self.assertIn(bridge_commit, lifecycle)
+        self.assertIn(bridge_sha256, lifecycle)
+        self.assertIn('bridge_bundle="${SCRIPT_DIR}/vendor/hermes-comfy-bridge.bundle"', lifecycle)
+        self.assertIn('sha256sum "${bridge_bundle}"', lifecycle)
+        self.assertIn('git bundle verify "${bridge_bundle}"', lifecycle)
+        self.assertIn('git clone --no-checkout "${bridge_bundle}" "${HERMES_BRIDGE_DIR}"', lifecycle)
+        self.assertIn('checkout --detach "${bridge_commit}"', lifecycle)
+        self.assertIn("hmac.compare_digest", source_verify)
+        self.assertIn("query token refused", source_verify)
+        self.assertIn("ALLOWED_COMMANDS", source_verify)
+        self.assertIn("--no-deps --no-build-isolation", lifecycle)
+
+    def test_bridge_lifecycle_is_loopback_only_and_fails_closed_without_runtime_secrets(self) -> None:
+        lifecycle = "ensure_hermes_comfy_bridge() {" + self.onstart.split(
+            "ensure_hermes_comfy_bridge() {", 1
+        )[1].split("\n\nensure_comfyui_manager_v4() {", 1)[0]
+        config = "validate_hermes_bridge_runtime_config() {" + self.onstart.split(
+            "validate_hermes_bridge_runtime_config() {", 1
+        )[1].split("\n\nverify_hermes_bridge_health() {", 1)[0]
+        health = "verify_hermes_bridge_health() {" + self.onstart.split(
+            "verify_hermes_bridge_health() {", 1
+        )[1].split("\n\nensure_hermes_comfy_bridge() {", 1)[0]
+        self.assertIn("HERMES_COMFY_BRIDGE_TOKEN is required", config)
+        self.assertIn("HERMES_COMFY_PANEL_WS_TOKEN is required", config)
+        self.assertIn('url.query or url.fragment != expected', config)
+        self.assertNotIn("openssl rand", lifecycle)
+        self.assertNotIn("?token=", lifecycle)
+        self.assertIn("--host 127.0.0.1 --port 9177", lifecycle)
+        self.assertIn("--no-access-log", lifecycle)
+        self.assertIn("http://127.0.0.1:9177/healthz", health)
+        self.assertIn("list_loopback_listening_pids_for_port 9177", lifecycle)
+        self.assertIn("Existing loopback bridge on port 9177 failed health verification.", lifecycle)
+        self.assertNotIn("kill -", lifecycle)
+        self.assertNotIn("COMFY_STATE_ROOT", lifecycle)
+        self.assertNotIn("rclone", lifecycle)
 
     def test_required_node_policy_and_live_registry_fail_closed(self) -> None:
         self.assertIn('local policy="${WORKFLOW_VALIDATION_POLICY:-required}"', self.onstart)

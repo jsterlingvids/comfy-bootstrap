@@ -25,6 +25,8 @@ readonly AUTOSAVE_PIDFILE="${WORKSPACE_ROOT}/comfy-bootstrap-autosave.pid"
 readonly COMFY_LOG="${WORKSPACE_ROOT}/comfyui.log"
 readonly CODEX_HOME_DIR="${WORKSPACE_ROOT}/.codex"
 readonly BOOTSTRAP_STATE_ROOT="${WORKSPACE_ROOT}/.comfy-bootstrap-state"
+readonly HERMES_BRIDGE_DIR="${WORKSPACE_ROOT}/.hermes-comfy-bridge"
+readonly HERMES_BRIDGE_LOG="${WORKSPACE_ROOT}/hermes-comfy-bridge.log"
 readonly DEFAULT_COMFY_PORT="8188"
 RUNTIME_PYTHON=python3
 if [[ -x /opt/conda/bin/python3 ]]; then
@@ -1348,6 +1350,120 @@ ensure_mcp_panel_pinned() {
 }
 
 
+verify_hermes_bridge_source() {
+  local bridge_dir="$1"
+  [[ -d "${bridge_dir}/.git" ]] &&
+    [[ "$(git -C "${bridge_dir}" rev-parse HEAD 2>/dev/null || true)" == "44a553db20fb4d5e007ea5b29bc95691de1cfa1e" ]] &&
+    [[ -f "${bridge_dir}/hermes_comfy_bridge/app.py" && -f "${bridge_dir}/hermes_comfy_bridge/broker.py" ]] &&
+    grep -Fq 'hmac.compare_digest' "${bridge_dir}/hermes_comfy_bridge/app.py" &&
+    grep -Fq 'query token refused' "${bridge_dir}/hermes_comfy_bridge/app.py" &&
+    grep -Fq 'Sec-WebSocket-Protocol' "${bridge_dir}/hermes_comfy_bridge/app.py" &&
+    grep -Fq 'ALLOWED_COMMANDS' "${bridge_dir}/hermes_comfy_bridge/broker.py" &&
+    ! grep -Eq '(^|[^[:alnum:]_])(subprocess|os\.system|shell=True)([^[:alnum:]_]|$)' "${bridge_dir}/hermes_comfy_bridge"/*.py
+}
+
+validate_hermes_bridge_runtime_config() {
+  [[ -n "${HERMES_COMFY_BRIDGE_TOKEN:-}" ]] || { log "HERMES_COMFY_BRIDGE_TOKEN is required for private bridge readiness."; return 1; }
+  [[ -n "${HERMES_COMFY_PANEL_WS_TOKEN:-}" ]] || { log "HERMES_COMFY_PANEL_WS_TOKEN is required for private bridge readiness."; return 1; }
+  [[ -n "${HERMES_PANEL_BRIDGE_URL:-}" ]] || { log "HERMES_PANEL_BRIDGE_URL is required for MCP Panel/Hermes control readiness."; return 1; }
+  HERMES_PANEL_BRIDGE_URL="${HERMES_PANEL_BRIDGE_URL}" \
+    HERMES_COMFY_PANEL_WS_TOKEN="${HERMES_COMFY_PANEL_WS_TOKEN}" "${RUNTIME_PYTHON}" - <<'PY'
+import base64
+import os
+from urllib.parse import urlsplit
+
+url = urlsplit(os.environ["HERMES_PANEL_BRIDGE_URL"])
+expected = "hermes-comfy-bridge.v1." + base64.urlsafe_b64encode(
+    os.environ["HERMES_COMFY_PANEL_WS_TOKEN"].encode("utf-8")
+).decode("ascii").rstrip("=")
+if url.scheme != "wss" or not url.netloc or url.path != "/bridge" or url.query or url.fragment != expected:
+    raise SystemExit("private bridge URL must be wss://host/bridge#<derived-subprotocol>, without a query")
+PY
+}
+
+verify_hermes_bridge_health() {
+  curl -fsS --max-time 5 "http://127.0.0.1:9177/healthz" |
+    "${RUNTIME_PYTHON}" -c 'import json,sys; value=json.load(sys.stdin); assert value == {"ok": True, "service": "hermes-comfy-bridge"}'
+}
+
+ensure_hermes_comfy_bridge() {
+  local bridge_bundle="${SCRIPT_DIR}/vendor/hermes-comfy-bridge.bundle"
+  local bridge_bundle_sha256="3d59f0efce97fe29201bc5258d3a917b395352eb354f0ba581d383c5c53a35fc"
+  local bridge_commit="44a553db20fb4d5e007ea5b29bc95691de1cfa1e"
+  local archive_dir="${BOOTSTRAP_STATE_ROOT}/disabled-host-bridges/hermes-comfy-bridge-$(date -u '+%Y%m%dT%H%M%SZ')"
+  local listener_pids=""
+
+  validate_hermes_bridge_runtime_config || return 1
+  [[ -f "${bridge_bundle}" ]] || { log "Vendored Hermes bridge bundle is missing."; return 1; }
+  [[ "$(sha256sum "${bridge_bundle}" | awk '{print $1}')" == "${bridge_bundle_sha256}" ]] || {
+    log "Vendored Hermes bridge bundle checksum mismatch."
+    return 1
+  }
+  git bundle verify "${bridge_bundle}" >/dev/null || { log "Vendored Hermes bridge bundle verification failed."; return 1; }
+  git bundle list-heads "${bridge_bundle}" | grep -Fq "${bridge_commit}" || {
+    log "Vendored Hermes bridge bundle does not contain the required commit."
+    return 1
+  }
+
+  if ! verify_hermes_bridge_source "${HERMES_BRIDGE_DIR}"; then
+    if [[ -e "${HERMES_BRIDGE_DIR}" ]]; then
+      mkdir -p "$(dirname "${archive_dir}")"
+      mv "${HERMES_BRIDGE_DIR}" "${archive_dir}"
+      log "Archived non-canonical Hermes bridge source."
+    fi
+    git clone --no-checkout "${bridge_bundle}" "${HERMES_BRIDGE_DIR}"
+    git -C "${HERMES_BRIDGE_DIR}" checkout --detach "${bridge_commit}"
+  fi
+  verify_hermes_bridge_source "${HERMES_BRIDGE_DIR}" || { log "Pinned Hermes bridge source markers are missing."; return 1; }
+
+  # The bundle deliberately contains source only. Do not resolve mutable network
+  # dependencies during bootstrap; the selected runtime must already provide them.
+  "${RUNTIME_PYTHON}" -m pip install --no-deps --no-build-isolation --disable-pip-version-check "${HERMES_BRIDGE_DIR}" >/dev/null || {
+    log "Pinned Hermes bridge source installation failed."
+    return 1
+  }
+  "${RUNTIME_PYTHON}" -c 'import fastapi,uvicorn,mcp,hermes_comfy_bridge' || {
+    log "Pinned Hermes bridge runtime dependencies are unavailable; refusing network dependency resolution."
+    return 1
+  }
+
+  listener_pids="$(list_listening_pids_for_port 9177 | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+  if [[ -n "${listener_pids}" ]]; then
+    [[ "$(list_loopback_listening_pids_for_port 9177 | tr '\n' ' ' | sed 's/[[:space:]]*$//')" == "${listener_pids}" ]] || {
+      log "Hermes bridge port 9177 is not exclusively loopback-bound."
+      return 1
+    }
+    verify_hermes_bridge_health || { log "Existing loopback bridge on port 9177 failed health verification."; return 1; }
+    log "Verified existing private Hermes bridge on loopback."
+    return 0
+  fi
+
+  umask 077
+  : > "${HERMES_BRIDGE_LOG}"
+  HERMES_COMFY_BRIDGE_TOKEN="${HERMES_COMFY_BRIDGE_TOKEN}" \
+    HERMES_COMFY_PANEL_WS_TOKEN="${HERMES_COMFY_PANEL_WS_TOKEN}" \
+    HERMES_COMFY_ALLOWED_ORIGIN_SUFFIXES="${HERMES_COMFY_ALLOWED_ORIGIN_SUFFIXES:-.ts.net}" \
+    PYTHONPATH="${HERMES_BRIDGE_DIR}${PYTHONPATH:+:${PYTHONPATH}}" \
+    nohup "${RUNTIME_PYTHON}" -m uvicorn hermes_comfy_bridge.app:app \
+      --host 127.0.0.1 --port 9177 --ws-max-size 67108864 --no-access-log --log-level warning \
+      >>"${HERMES_BRIDGE_LOG}" 2>&1 </dev/null &
+  for _ in $(seq 1 20); do
+    if verify_hermes_bridge_health; then
+      [[ -n "$(list_loopback_listening_pids_for_port 9177)" ]] || { log "Hermes bridge health was not loopback-bound."; return 1; }
+      [[ -z "$(comm -23 <(list_listening_pids_for_port 9177) <(list_loopback_listening_pids_for_port 9177))" ]] || {
+        log "Hermes bridge listener escaped loopback."
+        return 1
+      }
+      log "Private Hermes bridge is healthy on loopback."
+      return 0
+    fi
+    sleep 1
+  done
+  log "Private Hermes bridge did not become healthy; refusing advertisement."
+  return 1
+}
+
+
 ensure_comfyui_manager_v4() {
   local manager_package="comfyui-manager==4.2.2"
   local manager_archive_dir="${BOOTSTRAP_STATE_ROOT}/disabled-custom-nodes"
@@ -1581,7 +1697,7 @@ hydrate_runtime_env_allowlist() {
       CODEX_STATE_ROOT)
         (( CODEX_STATE_ROOT_WAS_SET == 1 )) || CODEX_STATE_ROOT="${item#*=}"
         ;;
-      B2_ACCOUNT_ID|B2_APP_KEY|B2_BUCKET|B2_ENDPOINT|TAILSCALE_AUTH_KEY|TAILSCALE_ENABLED|TAILSCALE_PROVIDER|TAILSCALE_COMFY_PORT|TAILSCALE_STATE|TAILSCALE_VAR_ROOT|HERMES_PANEL_BRIDGE_URL|ALLOW_LEGACY_SNAPSHOT|REQUIRED_RUNTIME_NODES|WORKFLOW_VALIDATION_POLICY|TAILSCALE_PROOF_ONLY|SNAPSHOT_WRITER|SNAPSHOT_WRITER_ID)
+      B2_ACCOUNT_ID|B2_APP_KEY|B2_BUCKET|B2_ENDPOINT|TAILSCALE_AUTH_KEY|TAILSCALE_ENABLED|TAILSCALE_PROVIDER|TAILSCALE_COMFY_PORT|TAILSCALE_STATE|TAILSCALE_VAR_ROOT|HERMES_PANEL_BRIDGE_URL|HERMES_COMFY_BRIDGE_TOKEN|HERMES_COMFY_PANEL_WS_TOKEN|HERMES_COMFY_ALLOWED_ORIGIN_SUFFIXES|ALLOW_LEGACY_SNAPSHOT|REQUIRED_RUNTIME_NODES|WORKFLOW_VALIDATION_POLICY|TAILSCALE_PROOF_ONLY|SNAPSHOT_WRITER|SNAPSHOT_WRITER_ID)
         [[ -v "${name}" ]] || export "${name}=${item#*=}"
         ;;
     esac
@@ -1642,6 +1758,7 @@ main() {
   ensure_comfyui_manager_v4
   restart_comfy_if_idle
   start_private_tailscale_comfy
+  ensure_hermes_comfy_bridge
   advertise_hermes_bridge
 
   install_node_requirements
@@ -1651,6 +1768,7 @@ main() {
     return 1
   }
   if restart_comfy_if_idle; then
+    ensure_hermes_comfy_bridge
     advertise_hermes_bridge
   else
     log "Full custom-node reload was deferred; refusing readiness until the live registry can be validated."
