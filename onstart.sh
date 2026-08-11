@@ -1312,6 +1312,38 @@ validate_mcp_panel_release_overrides() {
   fi
 }
 
+panel_checkout_matches_release() {
+  local panel_dir="$1"
+  local panel_repo="$2"
+  local panel_commit="$3"
+  local panel_bundle_sha256="$4"
+  local current_origin="" current_commit="" bundle_head=""
+
+  [[ -d "${panel_dir}/.git" ]] || return 1
+  [[ -f "${panel_repo}" ]] || return 1
+  [[ "$(sha256sum "${panel_repo}" | awk '{print $1}')" == "${panel_bundle_sha256}" ]] || return 1
+  git bundle verify "${panel_repo}" >/dev/null 2>&1 || return 1
+  bundle_head="$(git bundle list-heads "${panel_repo}" 2>/dev/null | awk 'NR == 1 {print $1}')"
+  [[ "${bundle_head}" == "${panel_commit}" ]] || return 1
+  current_origin="$(git -C "${panel_dir}" remote get-url origin 2>/dev/null || true)"
+  current_commit="$(git -C "${panel_dir}" rev-parse HEAD 2>/dev/null || true)"
+  [[ "${current_origin}" == "${panel_repo}" && "${current_commit}" == "${panel_commit}" ]] || return 1
+  git -C "${panel_dir}" symbolic-ref -q HEAD >/dev/null 2>&1 && return 1
+  [[ -z "$(git -C "${panel_dir}" status --porcelain --untracked-files=all)" ]] || return 1
+  [[ -f "${panel_dir}/__init__.py" && -f "${panel_dir}/web/js/comfyui-mcp-panel.js" ]] || return 1
+  grep -Fq 'advertise_bridge' "${panel_dir}/__init__.py" &&
+    grep -Fq 'bridge_url' "${panel_dir}/__init__.py" &&
+    grep -Fq '_advertised_bridge_dial' "${panel_dir}/__init__.py" &&
+    grep -Fq 'model_download_routes' "${panel_dir}/__init__.py" &&
+    grep -Fq 'bridge-capability.js' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
+    grep -Fq 'advertisedBridgeDialOptions' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
+    grep -Fq 'models_download' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
+    grep -Fq 'graph_stage_input_image' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
+    grep -Fq 'graph_stage_input_video' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
+    grep -Fq 'graph_expert_snapshot' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
+    grep -Fq 'input_asset_ticket_request' "${panel_dir}/web/js/comfyui-mcp-panel.js"
+}
+
 ensure_mcp_panel_pinned() {
   validate_mcp_panel_release_overrides || return 1
 
@@ -1321,27 +1353,10 @@ ensure_mcp_panel_pinned() {
   local panel_dir="${CUSTOM_NODES_DIR}/comfyui-mcp-panel"
   local archive_dir=""
   archive_dir="${BOOTSTRAP_STATE_ROOT}/disabled-custom-nodes/comfyui-mcp-panel-$(date -u '+%Y%m%dT%H%M%SZ')"
-  local current_origin="" current_commit=""
 
-  if [[ -d "${panel_dir}/.git" ]]; then
-    current_origin="$(git -C "${panel_dir}" remote get-url origin 2>/dev/null || true)"
-    current_commit="$(git -C "${panel_dir}" rev-parse HEAD 2>/dev/null || true)"
-    if [[ "${current_origin}" == "${panel_repo}" && "${current_commit}" == "${panel_commit}" ]] &&
-       [[ -f "${panel_dir}/__init__.py" && -f "${panel_dir}/web/js/comfyui-mcp-panel.js" ]] &&
-       grep -Fq 'advertise_bridge' "${panel_dir}/__init__.py" &&
-       grep -Fq 'bridge_url' "${panel_dir}/__init__.py" &&
-       grep -Fq '_advertised_bridge_dial' "${panel_dir}/__init__.py" &&
-       grep -Fq 'model_download_routes' "${panel_dir}/__init__.py" &&
-       grep -Fq 'bridge-capability.js' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
-       grep -Fq 'advertisedBridgeDialOptions' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
-       grep -Fq 'models_download' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
-       grep -Fq 'graph_stage_input_image' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
-       grep -Fq 'graph_stage_input_video' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
-       grep -Fq 'graph_expert_snapshot' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
-       grep -Fq 'input_asset_ticket_request' "${panel_dir}/web/js/comfyui-mcp-panel.js"; then
-      log "Pinned MCP Panel already present and source markers verified at ${panel_commit}."
-      return 0
-    fi
+  if panel_checkout_matches_release "${panel_dir}" "${panel_repo}" "${panel_commit}" "${panel_bundle_sha256}"; then
+    log "Pinned MCP Panel checkout and bundle provenance verified at ${panel_commit}."
+    return 0
   fi
 
   if [[ -e "${panel_dir}" ]]; then
@@ -1365,19 +1380,8 @@ ensure_mcp_panel_pinned() {
     log "Pinned MCP Panel checkout did not resolve to the reviewed commit."
     return 1
   fi
-  if ! { [[ -f "${panel_dir}/__init__.py" && -f "${panel_dir}/web/js/comfyui-mcp-panel.js" ]] &&
-    grep -Fq 'advertise_bridge' "${panel_dir}/__init__.py" &&
-    grep -Fq 'bridge_url' "${panel_dir}/__init__.py" &&
-    grep -Fq '_advertised_bridge_dial' "${panel_dir}/__init__.py" &&
-    grep -Fq 'model_download_routes' "${panel_dir}/__init__.py" &&
-    grep -Fq 'bridge-capability.js' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
-    grep -Fq 'advertisedBridgeDialOptions' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
-    grep -Fq 'models_download' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
-    grep -Fq 'graph_stage_input_image' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
-    grep -Fq 'graph_stage_input_video' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
-    grep -Fq 'graph_expert_snapshot' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
-    grep -Fq 'input_asset_ticket_request' "${panel_dir}/web/js/comfyui-mcp-panel.js"; }; then
-    log "Pinned MCP Panel source markers are missing."
+  if ! panel_checkout_matches_release "${panel_dir}" "${panel_repo}" "${panel_commit}" "${panel_bundle_sha256}"; then
+    log "Pinned MCP Panel checkout failed post-install provenance verification."
     return 1
   fi
 }

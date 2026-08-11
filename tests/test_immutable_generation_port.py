@@ -220,6 +220,17 @@ class ImmutableGenerationPortTests(unittest.TestCase):
         activate = (REPO / "snapshot_activate.py").read_text(encoding="utf-8")
         self.assertIn('PRESERVED_BAKED_NODES = ("comfyui-mcp-panel",)', activate)
 
+    def test_existing_panel_checkout_requires_clean_bundle_provenance(self) -> None:
+        checker = "panel_checkout_matches_release() {" + self.onstart.split(
+            "panel_checkout_matches_release() {", 1
+        )[1].split("\n\nensure_mcp_panel_pinned() {", 1)[0]
+        self.assertIn('git bundle verify "${panel_repo}"', checker)
+        self.assertIn('git bundle list-heads "${panel_repo}"', checker)
+        self.assertIn('git -C "${panel_dir}" symbolic-ref -q HEAD', checker)
+        self.assertIn('git -C "${panel_dir}" status --porcelain --untracked-files=all', checker)
+        self.assertIn('panel_checkout_matches_release "${panel_dir}" "${panel_repo}"', self.onstart)
+        self.assertIn("Pinned MCP Panel checkout failed post-install provenance verification.", self.onstart)
+
     def test_external_bridge_is_mandatory_wss_capability_and_read_back(self) -> None:
         advertise = "advertise_hermes_bridge() {" + self.onstart.split(
             "advertise_hermes_bridge() {", 1
