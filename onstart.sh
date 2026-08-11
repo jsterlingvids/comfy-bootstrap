@@ -1618,6 +1618,36 @@ PY
 }
 
 
+start_bridge_advertisement_watch() {
+  local port="${COMFYUI_ACTIVE_PORT:-${DEFAULT_COMFY_PORT}}"
+  [[ -n "${HERMES_PANEL_BRIDGE_URL:-}" ]] || return 1
+  (
+    local observed_pid="" current_pid="" attempts=0
+    while true; do
+      current_pid="$(find_comfy_listener_pid_for_port "${port}" || true)"
+      if [[ -n "${current_pid}" && "${current_pid}" != "${observed_pid}" ]]; then
+        attempts=20
+        while (( attempts > 0 )); do
+          if curl -fsS --max-time 5 "http://127.0.0.1:${port}/system_stats" >/dev/null; then
+            if advertise_hermes_bridge; then
+              observed_pid="${current_pid}"
+              log "ComfyUI listener change received a fresh private Hermes bridge advertisement."
+              break
+            fi
+          fi
+          sleep 2
+          current_pid="$(find_comfy_listener_pid_for_port "${port}" || true)"
+          [[ -n "${current_pid}" ]] || break
+          attempts=$((attempts - 1))
+        done
+      fi
+      sleep 3
+    done
+  ) </dev/null >>"${COMFY_LOG}" 2>&1 &
+  log "Started in-memory ComfyUI listener watcher for private Hermes bridge re-advertisement."
+}
+
+
 validate_workflow_nodes_available() {
   local comfy_args_raw="${COMFYUI_ARGS:---listen 127.0.0.1 --port ${DEFAULT_COMFY_PORT}}"
   local -a comfy_args=()
@@ -1733,6 +1763,7 @@ main() {
     log "Full custom-node reload was deferred; refusing readiness until the live registry can be validated."
     return 1
   fi
+  start_bridge_advertisement_watch
   validate_workflow_nodes_available
 
   restore_codex_home

@@ -234,7 +234,7 @@ class ImmutableGenerationPortTests(unittest.TestCase):
     def test_external_bridge_is_mandatory_wss_capability_and_read_back(self) -> None:
         advertise = "advertise_hermes_bridge() {" + self.onstart.split(
             "advertise_hermes_bridge() {", 1
-        )[1].split("\n\nvalidate_workflow_nodes_available() {", 1)[0]
+        )[1].split("\n\nstart_bridge_advertisement_watch() {", 1)[0]
         self.assertIn("HERMES_PANEL_BRIDGE_URL is required for MCP Panel/Hermes control readiness.", self.onstart)
         self.assertIn('url.scheme != "wss"', advertise)
         self.assertIn("not url.fragment", advertise)
@@ -277,7 +277,7 @@ class ImmutableGenerationPortTests(unittest.TestCase):
         try:
             advertise = "advertise_hermes_bridge() {" + self.onstart.split(
                 "advertise_hermes_bridge() {", 1
-            )[1].split("\n\nvalidate_workflow_nodes_available() {", 1)[0]
+            )[1].split("\n\nstart_bridge_advertisement_watch() {", 1)[0]
             result = subprocess.run(
                 ["bash", "-c", "set -Eeuo pipefail\nlog() { :; }\n" + advertise + "\nadvertise_hermes_bridge\n"],
                 text=True,
@@ -326,7 +326,7 @@ class ImmutableGenerationPortTests(unittest.TestCase):
         try:
             advertise = "advertise_hermes_bridge() {" + self.onstart.split(
                 "advertise_hermes_bridge() {", 1
-            )[1].split("\n\nvalidate_workflow_nodes_available() {", 1)[0]
+            )[1].split("\n\nstart_bridge_advertisement_watch() {", 1)[0]
             result = subprocess.run(
                 ["bash", "-c", "set -Eeuo pipefail\nlog() { printf '%s\\n' \"$*\"; }\n" + advertise + "\nadvertise_hermes_bridge\n"],
                 text=True,
@@ -372,12 +372,28 @@ class ImmutableGenerationPortTests(unittest.TestCase):
     def test_bridge_capability_is_not_logged_or_persisted_by_advertisement(self) -> None:
         advertise = "advertise_hermes_bridge() {" + self.onstart.split(
             "advertise_hermes_bridge() {", 1
-        )[1].split("\n\nvalidate_workflow_nodes_available() {", 1)[0]
+        )[1].split("\n\nstart_bridge_advertisement_watch() {", 1)[0]
         self.assertNotIn('log "${bridge_url}', advertise)
         self.assertNotIn("printf", advertise)
         self.assertNotIn("write_stamp", advertise)
         self.assertNotIn(">>", advertise)
         self.assertNotIn('> "${', advertise)
+
+    def test_bridge_listener_watcher_re_advertises_after_pid_change_without_persisting_capability(self) -> None:
+        watcher = "start_bridge_advertisement_watch() {" + self.onstart.split(
+            "start_bridge_advertisement_watch() {", 1
+        )[1].split("\n\nvalidate_workflow_nodes_available() {", 1)[0]
+        self.assertIn('current_pid="$(find_comfy_listener_pid_for_port', watcher)
+        self.assertIn('"${current_pid}" != "${observed_pid}"', watcher)
+        self.assertIn('curl -fsS --max-time 5 "http://127.0.0.1:${port}/system_stats"', watcher)
+        self.assertIn("advertise_hermes_bridge", watcher)
+        self.assertNotIn("HERMES_PANEL_BRIDGE_URL=", watcher)
+        self.assertNotIn("write_stamp", watcher)
+        self.assertNotIn("saveBridgeUrl", watcher)
+        self.assertLess(
+            self.onstart.index("start_bridge_advertisement_watch", self.onstart.index("main()")),
+            self.onstart.index("validate_workflow_nodes_available", self.onstart.index("main()")),
+        )
 
     def test_required_node_policy_and_live_registry_fail_closed(self) -> None:
         self.assertIn('local policy="${WORKFLOW_VALIDATION_POLICY:-required}"', self.onstart)
