@@ -1553,13 +1553,22 @@ raise SystemExit(0 if not q.get("queue_running") and not q.get("queue_pending") 
 }
 
 
+
+external_bridge_advertisement_enabled() {
+  [[ "${HERMES_PANEL_EXTERNAL_ADVERTISEMENT:-0}" == "1" ]]
+}
+
 advertise_hermes_bridge() {
   local port="${COMFYUI_ACTIVE_PORT:-${DEFAULT_COMFY_PORT}}"
   local advertise_status=0
-  [[ -n "${HERMES_PANEL_BRIDGE_URL:-}" ]] || {
+  if [[ -z "${HERMES_PANEL_BRIDGE_URL:-}" ]]; then
+    if external_bridge_advertisement_enabled; then
+      log "Hermes bridge route will be advertised by the external private orchestrator; no capability is present in this instance."
+      return 0
+    fi
     log "HERMES_PANEL_BRIDGE_URL is required for MCP Panel/Hermes control readiness."
     return 1
-  }
+  fi
 
   HERMES_PANEL_BRIDGE_URL="${HERMES_PANEL_BRIDGE_URL}" COMFYUI_ACTIVE_PORT="${port}" "${RUNTIME_PYTHON}" - <<'PY' || advertise_status=$?
 import json
@@ -1620,7 +1629,13 @@ PY
 
 start_bridge_advertisement_watch() {
   local port="${COMFYUI_ACTIVE_PORT:-${DEFAULT_COMFY_PORT}}"
-  [[ -n "${HERMES_PANEL_BRIDGE_URL:-}" ]] || return 1
+  if [[ -z "${HERMES_PANEL_BRIDGE_URL:-}" ]]; then
+    if external_bridge_advertisement_enabled; then
+      log "External Hermes advertisement supervisor owns route refresh after ComfyUI listener changes."
+      return 0
+    fi
+    return 1
+  fi
   (
     local observed_pid="" current_pid="" attempts=0
     while true; do
@@ -1688,7 +1703,7 @@ hydrate_runtime_env_allowlist() {
       CODEX_STATE_ROOT)
         (( CODEX_STATE_ROOT_WAS_SET == 1 )) || CODEX_STATE_ROOT="${item#*=}"
         ;;
-      B2_ACCOUNT_ID|B2_APP_KEY|B2_BUCKET|B2_ENDPOINT|TAILSCALE_AUTH_KEY|TAILSCALE_ENABLED|TAILSCALE_PROVIDER|TAILSCALE_COMFY_PORT|TAILSCALE_STATE|TAILSCALE_VAR_ROOT|HERMES_PANEL_BRIDGE_URL|ALLOW_LEGACY_SNAPSHOT|REQUIRED_RUNTIME_NODES|WORKFLOW_VALIDATION_POLICY|TAILSCALE_PROOF_ONLY|SNAPSHOT_WRITER|SNAPSHOT_WRITER_ID)
+      B2_ACCOUNT_ID|B2_APP_KEY|B2_BUCKET|B2_ENDPOINT|TAILSCALE_AUTH_KEY|TAILSCALE_ENABLED|TAILSCALE_PROVIDER|TAILSCALE_COMFY_PORT|TAILSCALE_STATE|TAILSCALE_VAR_ROOT|HERMES_PANEL_BRIDGE_URL|HERMES_PANEL_EXTERNAL_ADVERTISEMENT|ALLOW_LEGACY_SNAPSHOT|REQUIRED_RUNTIME_NODES|WORKFLOW_VALIDATION_POLICY|TAILSCALE_PROOF_ONLY|SNAPSHOT_WRITER|SNAPSHOT_WRITER_ID)
         [[ -v "${name}" ]] || export "${name}=${item#*=}"
         ;;
     esac

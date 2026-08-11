@@ -231,6 +231,16 @@ class ImmutableGenerationPortTests(unittest.TestCase):
         self.assertIn('panel_checkout_matches_release "${panel_dir}" "${panel_repo}"', self.onstart)
         self.assertIn("Pinned MCP Panel checkout failed post-install provenance verification.", self.onstart)
 
+    def test_external_advertisement_mode_never_imports_a_capability_but_allows_private_supervision(self) -> None:
+        self.assertIn("HERMES_PANEL_EXTERNAL_ADVERTISEMENT", self.onstart)
+        self.assertIn("external_bridge_advertisement_enabled()", self.onstart)
+        self.assertIn("no capability is present in this instance", self.onstart)
+        self.assertIn("External Hermes advertisement supervisor owns route refresh", self.onstart)
+        self.assertLess(
+            self.onstart.index("external_bridge_advertisement_enabled()"),
+            self.onstart.index("advertise_hermes_bridge()"),
+        )
+
     def test_external_bridge_is_mandatory_wss_capability_and_read_back(self) -> None:
         advertise = "advertise_hermes_bridge() {" + self.onstart.split(
             "advertise_hermes_bridge() {", 1
