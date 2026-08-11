@@ -35,8 +35,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 # Release template pins: these reviewed values are deliberately not configurable.
 readonly MCP_PANEL_RELEASE_REPOSITORY="${SCRIPT_DIR}/vendor/comfyui-mcp-panel.bundle"
-readonly MCP_PANEL_RELEASE_COMMIT="238cc03a014e8ecb981156a76aa21a601178c577"
-readonly MCP_PANEL_RELEASE_BUNDLE_SHA256="273f30e325a5f71f7ca3599b89ae4d2b6a38a9dc3f5775b994124d4c720e2af5"
+readonly MCP_PANEL_RELEASE_COMMIT="bf9b5c8d41f16002421e1e61723a859df9c93b3c"
+readonly MCP_PANEL_RELEASE_BUNDLE_SHA256="247747d1d0f4f1b98609b08fd4aa71d57232bc601b21bd989c9139a7bddaae0a"
 # shellcheck source=lib/runtime-profile.sh
 source "${SCRIPT_DIR}/lib/runtime-profile.sh"
 # shellcheck source=lib/tailscale-private-comfy.sh
