@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Rendered immutable Vast bootstrap loader. Do not edit a rendered copy by hand.
+set -Eeuo pipefail
+
+readonly BOOTSTRAP_REPOSITORY='@BOOTSTRAP_REPOSITORY@'
+readonly BOOTSTRAP_COMMIT='@BOOTSTRAP_COMMIT@'
+readonly EXPECTED_PANEL_COMMIT='@PANEL_COMMIT@'
+readonly EXPECTED_PANEL_BUNDLE_SHA256='@PANEL_BUNDLE_SHA256@'
+readonly WORKSPACE_ROOT='/workspace'
+readonly BOOTSTRAP_DIR="${WORKSPACE_ROOT}/comfy-bootstrap"
+
+mkdir -p "${WORKSPACE_ROOT}"
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y --no-install-recommends git ca-certificates
+
+rm -rf "${BOOTSTRAP_DIR}"
+git clone --no-checkout "${BOOTSTRAP_REPOSITORY}" "${BOOTSTRAP_DIR}"
+git -C "${BOOTSTRAP_DIR}" fetch --depth=1 origin "${BOOTSTRAP_COMMIT}"
+git -C "${BOOTSTRAP_DIR}" checkout --detach "${BOOTSTRAP_COMMIT}"
+actual_commit="$(git -C "${BOOTSTRAP_DIR}" rev-parse HEAD)"
+[[ "${actual_commit}" == "${BOOTSTRAP_COMMIT}" ]] || {
+  printf '%s\n' 'Immutable bootstrap commit verification failed.' >&2
+  exit 1
+}
+
+grep -Fq "readonly MCP_PANEL_RELEASE_COMMIT=\"${EXPECTED_PANEL_COMMIT}\"" "${BOOTSTRAP_DIR}/onstart.sh"
+grep -Fq "readonly MCP_PANEL_RELEASE_BUNDLE_SHA256=\"${EXPECTED_PANEL_BUNDLE_SHA256}\"" "${BOOTSTRAP_DIR}/onstart.sh"
+
+cd "${BOOTSTRAP_DIR}"
+exec bash onstart.sh
