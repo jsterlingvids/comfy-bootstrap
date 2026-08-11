@@ -35,8 +35,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 # Release template pins: these reviewed values are deliberately not configurable.
 readonly MCP_PANEL_RELEASE_REPOSITORY="${SCRIPT_DIR}/vendor/comfyui-mcp-panel.bundle"
-readonly MCP_PANEL_RELEASE_COMMIT="826a810e06bc3ed534a74142f99b0e92133d1805"
-readonly MCP_PANEL_RELEASE_BUNDLE_SHA256="2c9fbee8eb3094771932900da7cbdbe91517b401bef421a2a426ce7caad53813"
+readonly MCP_PANEL_RELEASE_COMMIT="238cc03a014e8ecb981156a76aa21a601178c577"
+readonly MCP_PANEL_RELEASE_BUNDLE_SHA256="273f30e325a5f71f7ca3599b89ae4d2b6a38a9dc3f5775b994124d4c720e2af5"
 # shellcheck source=lib/runtime-profile.sh
 source "${SCRIPT_DIR}/lib/runtime-profile.sh"
 # shellcheck source=lib/tailscale-private-comfy.sh
@@ -706,6 +706,10 @@ restore_custom_nodes_snapshot() {
   fi
 
   stage_root="$(mktemp -d "${WORKSPACE_ROOT}/.legacy-custom-nodes.XXXXXX")"
+  # rclone does not create an empty destination when the legacy remote has no
+  # files.  Create it ourselves so the empty-snapshot fallback below remains a
+  # deliberate branch rather than a `set -e` failure in `find`.
+  mkdir -p "${stage_root}/custom_nodes"
   log "Downloading legacy custom-node snapshot into an isolated stage (timeout=${restore_timeout}s)."
   if ! rclone_bounded "${restore_timeout}" sync "${REMOTE_CUSTOM_NODES}" "${stage_root}/custom_nodes" --create-empty-src-dirs; then
     rm -rf "${stage_root}"
