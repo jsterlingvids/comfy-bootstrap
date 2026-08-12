@@ -1710,6 +1710,17 @@ hydrate_runtime_env_allowlist() {
   done < "${environ_path}"
 }
 
+repair_provider_ssh_authorized_keys() {
+  # Vast may inject an authorized_keys file with modes sshd refuses. Repair only
+  # the provider-managed root SSH surface before lengthy bootstrap work; do not
+  # create keys, add principals, or loosen permissions.
+  install -d -m 0700 -o root -g root /root/.ssh
+  if [[ -f /root/.ssh/authorized_keys ]]; then
+    chown root:root /root/.ssh/authorized_keys
+    chmod 0600 /root/.ssh/authorized_keys
+  fi
+}
+
 finalize_runtime_state_roots() {
   ACTIVE_STATE_ROOT="${COMFY_STATE_ROOT}/unavailable"
   REMOTE_CUSTOM_NODES="${ACTIVE_STATE_ROOT}/custom_nodes"
@@ -1722,6 +1733,7 @@ finalize_runtime_state_roots() {
 main() {
   hydrate_runtime_env_allowlist
   finalize_runtime_state_roots
+  repair_provider_ssh_authorized_keys
   log "Bootstrap starting."
   wait_for_workspace
   install_packages_if_missing

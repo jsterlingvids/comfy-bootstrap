@@ -110,6 +110,20 @@ class ImmutableGenerationPortTests(unittest.TestCase):
             self.assertEqual(explicit.returncode, 0, explicit.stdout)
             self.assertEqual(explicit.stdout.strip(), "default:shared|default:codex|0")
 
+    def test_provider_authorized_keys_repair_is_narrow_and_runs_before_bootstrap_work(self) -> None:
+        repair = "repair_provider_ssh_authorized_keys() {" + self.onstart.split(
+            "repair_provider_ssh_authorized_keys() {", 1
+        )[1].split("\n\nfinalize_runtime_state_roots() {", 1)[0]
+        self.assertIn("install -d -m 0700 -o root -g root /root/.ssh", repair)
+        self.assertIn("[[ -f /root/.ssh/authorized_keys ]]", repair)
+        self.assertIn("chown root:root /root/.ssh/authorized_keys", repair)
+        self.assertIn("chmod 0600 /root/.ssh/authorized_keys", repair)
+        self.assertNotIn("ssh-keygen", repair)
+        self.assertNotIn("authorized_keys <<", repair)
+        self.assertNotIn("chmod 0644", repair)
+        main = "main() {" + self.onstart.split("main() {", 1)[1]
+        self.assertLess(main.index("repair_provider_ssh_authorized_keys"), main.index("ensure_approved_torch_runtime"))
+
     def test_generation_restore_is_verified_and_transactional(self) -> None:
         self.assertIn("select_snapshot_generation()", self.onstart)
         self.assertIn('ALLOW_LEGACY_SNAPSHOT:-0', self.onstart)
