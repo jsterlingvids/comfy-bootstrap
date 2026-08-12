@@ -1,0 +1,57 @@
+{
+  "schema": "private-comfy-panel-release/v1",
+  "release": "private-panel-stable-v1.0.0",
+  "publication_date": "2026-08-12",
+  "panel": {
+    "commit": "a3e75aa6bb836d4034a20fb94eb4792ee91b1606",
+    "bundle": "vendor/comfyui-mcp-panel.bundle",
+    "bundle_sha256": "fa71e450599ee63b7c0de3e87c9c9fa965da00f0c6de16b3c3d8d43c46a31b9d",
+    "distribution": "Immutable Git bundle vendored in the pushed bootstrap repository; no standalone Panel repository publication is claimed."
+  },
+  "bootstrap_runtime": {
+    "repository": "https://github.com/jsterlingvids/comfy-bootstrap",
+    "commit": "82088809685b6f150808aced3adfe7f943874d77"
+  },
+  "vast_template": {
+    "id": 534171,
+    "name": "comfy-private-panel-stable",
+    "hash": "aa3398addd01913455e7ebd3fadf680f",
+    "image": "vastai/comfy:v0.30.0-cuda-13.2-py312",
+    "private": true,
+    "disk_gb": 250,
+    "runtime": "ssh"
+  },
+  "rollback": {
+    "vast_template_id": 532775,
+    "preserved": true
+  },
+  "acceptance": {
+    "fresh_instance": 47549423,
+    "real_noninteractive_ssh": true,
+    "authorized_keys_mode_owner": "600:root:root",
+    "exact_detached_provenance": true,
+    "clean_panel_checkout": true,
+    "tailnet_only_comfyui": true,
+    "public_comfyui_8443": "unreachable",
+    "agent_first_frame": true,
+    "connect": "connected",
+    "reconnect": "connected with freshly reacquired split capability",
+    "loopback_fallback_seen": false,
+    "civitai_entrypoint": "visible",
+    "civitai_bounded_search": "flux",
+    "queue_running": 0,
+    "queue_pending": 0,
+    "inference_performed": false,
+    "lifecycle_undo_evidence": "Carried from accepted R12 lineage; R14 delta is restricted to secure reconnect readback/race fencing and tests."
+  },
+  "tests": {
+    "focused_reconnect_capability": {"passed": 13, "failed": 0},
+    "javascript": {"passed": 3136, "failed": 0, "skipped": 3},
+    "panel_python": {"passed": 70, "failed": 0},
+    "bootstrap": {"passed": 69, "failed": 0},
+    "typescript": "passed",
+    "browser_bundle": "passed"
+  },
+  "independent_review": "APPROVE",
+  "secrets_in_manifest": false
+}
