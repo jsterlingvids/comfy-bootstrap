@@ -136,8 +136,8 @@ class ImmutableGenerationPortTests(unittest.TestCase):
 
     def test_panel_release_pins_reject_mismatched_environment_overrides(self) -> None:
         repository = "${SCRIPT_DIR}/vendor/comfyui-mcp-panel.bundle"
-        commit = "8dc1464dc857c465e6be01f3c10ea8b1e6233c66"
-        checksum = "3e3a0a2a5b7d5b965a52ab38bb4c0e8cfc1b67427ce2bd670137e07b8a5f14bc"
+        commit = "defb7606622084f1ac133f90b4a82ea4fea92a68"
+        checksum = "1ff4ec52960c0f508754a6bc4b534fa12c1badbd7d8c28af71a960dc21abc8d8"
         validator = "validate_mcp_panel_release_overrides() {" + self.onstart.split(
             "validate_mcp_panel_release_overrides() {", 1
         )[1].split("\n\nensure_mcp_panel_pinned() {", 1)[0]
@@ -198,11 +198,11 @@ class ImmutableGenerationPortTests(unittest.TestCase):
         self.assertNotIn('local panel_bundle_sha256="${MCP_PANEL_BUNDLE_SHA256:-', self.onstart)
 
     def test_panel_is_pinned_preserved_and_not_snapshotted(self) -> None:
-        commit = "8dc1464dc857c465e6be01f3c10ea8b1e6233c66"
+        commit = "defb7606622084f1ac133f90b4a82ea4fea92a68"
         bundle = REPO / "vendor/comfyui-mcp-panel.bundle"
         self.assertEqual(
             hashlib.sha256(bundle.read_bytes()).hexdigest(),
-            "3e3a0a2a5b7d5b965a52ab38bb4c0e8cfc1b67427ce2bd670137e07b8a5f14bc",
+            "1ff4ec52960c0f508754a6bc4b534fa12c1badbd7d8c28af71a960dc21abc8d8",
         )
         verified = subprocess.run(
             ["git", "bundle", "verify", str(bundle)],
