@@ -35,8 +35,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 # Release template pins: these reviewed values are deliberately not configurable.
 readonly MCP_PANEL_RELEASE_REPOSITORY="${SCRIPT_DIR}/vendor/comfyui-mcp-panel.bundle"
-readonly MCP_PANEL_RELEASE_COMMIT="5b8b29a767980ef1776c56dc1c0a551e3401b37e"
-readonly MCP_PANEL_RELEASE_BUNDLE_SHA256="f7398428051d861f52b4e6892e6027749ea82f4a139b475c5f8f603a5f03997d"
+readonly MCP_PANEL_RELEASE_COMMIT="f675f2a5a4093a579f27742d9a927599ed95075d"
+readonly MCP_PANEL_RELEASE_BUNDLE_SHA256="5ed371c83ba7ed7104f7cfda4533538b2014bbd5489e558aa353af3d80e36632"
 # shellcheck source=lib/runtime-profile.sh
 source "${SCRIPT_DIR}/lib/runtime-profile.sh"
 # shellcheck source=lib/tailscale-private-comfy.sh
@@ -1341,7 +1341,9 @@ panel_checkout_matches_release() {
     grep -Fq 'graph_stage_input_image' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
     grep -Fq 'graph_stage_input_video' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
     grep -Fq 'graph_expert_snapshot' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
-    grep -Fq 'input_asset_ticket_request' "${panel_dir}/web/js/comfyui-mcp-panel.js"
+    grep -Fq 'input_asset_ticket_request' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
+    grep -Fq 'media-stage-approval.js' "${panel_dir}/web/js/comfyui-mcp-panel.js" &&
+    grep -Fq 'media_stage_approval_request' "${panel_dir}/web/js/comfyui-mcp-panel.js"
 }
 
 ensure_mcp_panel_pinned() {
