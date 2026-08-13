@@ -9,8 +9,8 @@ This repository bootstraps the existing ComfyUI installation in `vastai/comfy`, 
 - The old mutable root is ignored unless `ALLOW_LEGACY_SNAPSHOT=1` is explicitly set for a one-time migration.
 - Vast does not autosave unless both `SNAPSHOT_WRITER=1` and a unique `SNAPSHOT_WRITER_ID` are supplied. Do not authorize two providers/instances at once; stop the old writer before handing publication to a new one.
 - Codex state is provider-local by default at `myb2:comfy-provider-local/vast/codex-home`. Codex/provider credentials are not part of shared Comfy generations.
-- The MCP Panel is not mutable shared state. Bootstrap preserves and pins `comfyui-mcp-panel` v1.1.3 at the reviewed direct-Hermes release `f675f2a` and disables Panel backend autospawn.
-- The Hermes bridge is an independently deployed external companion service on the durable local Hermes host, not a process inside a disposable Vast GPU box. This distribution requires certified bridge commit `55691b424835541adb9e18dd54c5b06bae74fa50`. Vast only advertises its runtime-provided endpoint to the MCP Panel; it never vendors, installs, starts, monitors, or persists bridge source, processes, or secrets.
+- The MCP Panel is not mutable shared state. Bootstrap preserves and pins `comfyui-mcp-panel` v1.1.4 at the reviewed direct-Hermes release `658f70f` and disables Panel backend autospawn.
+- The Hermes bridge is an independently deployed external companion service on the durable local Hermes host, not a process inside a disposable Vast GPU box. This distribution requires certified bridge commit `4996cea420d9e271224b799eafbfe6b2146a483c`. Vast only advertises its runtime-provided endpoint to the MCP Panel; it never vendors, installs, starts, restarts, monitors, or persists bridge source, processes, or secrets. The Bridge's workflow-guidance context is read-only and does not widen Vast/bootstrap authority.
 
 ## Required configuration
 

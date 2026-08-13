@@ -136,8 +136,8 @@ class ImmutableGenerationPortTests(unittest.TestCase):
 
     def test_panel_release_pins_reject_mismatched_environment_overrides(self) -> None:
         repository = "${SCRIPT_DIR}/vendor/comfyui-mcp-panel.bundle"
-        commit = "f675f2a5a4093a579f27742d9a927599ed95075d"
-        checksum = "5ed371c83ba7ed7104f7cfda4533538b2014bbd5489e558aa353af3d80e36632"
+        commit = "658f70f3e8b6a3e08dec35d95aeabeffeb55ffc3"
+        checksum = "ead133736c624b2712c1d81783e66db66822921a30dff79b88144e19b00a9466"
         validator = "validate_mcp_panel_release_overrides() {" + self.onstart.split(
             "validate_mcp_panel_release_overrides() {", 1
         )[1].split("\n\nensure_mcp_panel_pinned() {", 1)[0]
@@ -198,11 +198,11 @@ class ImmutableGenerationPortTests(unittest.TestCase):
         self.assertNotIn('local panel_bundle_sha256="${MCP_PANEL_BUNDLE_SHA256:-', self.onstart)
 
     def test_panel_is_pinned_preserved_and_not_snapshotted(self) -> None:
-        commit = "f675f2a5a4093a579f27742d9a927599ed95075d"
+        commit = "658f70f3e8b6a3e08dec35d95aeabeffeb55ffc3"
         bundle = REPO / "vendor/comfyui-mcp-panel.bundle"
         self.assertEqual(
             hashlib.sha256(bundle.read_bytes()).hexdigest(),
-            "5ed371c83ba7ed7104f7cfda4533538b2014bbd5489e558aa353af3d80e36632",
+            "ead133736c624b2712c1d81783e66db66822921a30dff79b88144e19b00a9466",
         )
         with tempfile.TemporaryDirectory() as non_repo_cwd:
             verified = subprocess.run(
@@ -249,6 +249,9 @@ class ImmutableGenerationPortTests(unittest.TestCase):
         self.assertIn("input_asset_ticket_request", self.onstart)
         self.assertIn("media-stage-approval.js", self.onstart)
         self.assertIn("media_stage_approval_request", self.onstart)
+        self.assertIn("applyPreGraphRequiredWidgetAssignment", self.onstart)
+        self.assertIn("isVideoLoaderFallbackEligibleError", self.onstart)
+        self.assertIn("MEDIA_STAGE_INITIAL_WIDGET", self.onstart)
         self.assertIn("ensure_mcp_panel_pinned", self.onstart)
         self.assertIn("COMFYUI_MCP_NO_AUTOSPAWN=1", self.onstart)
         self.assertIn('comfyui-mcp-panel/**', self.save)

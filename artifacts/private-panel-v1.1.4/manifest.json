@@ -1,0 +1,35 @@
+{
+  "schema": "private-comfy-panel-distribution/v1",
+  "release": "private-panel-v1.1.4",
+  "publication_date": "2026-08-13",
+  "panel": {
+    "commit": "658f70f3e8b6a3e08dec35d95aeabeffeb55ffc3",
+    "bundle": "vendor/comfyui-mcp-panel.bundle",
+    "bundle_sha256": "ead133736c624b2712c1d81783e66db66822921a30dff79b88144e19b00a9466",
+    "bundle_ref": "HEAD",
+    "complete_history": true
+  },
+  "bridge": {
+    "required_commit": "4996cea420d9e271224b799eafbfe6b2146a483c",
+    "workflow_guidance": "Read-only context only; no mutation authority is added.",
+    "distribution": "Independently deployed durable loopback service; source is not bundled or managed by bootstrap."
+  },
+  "distribution": "Immutable Panel Git bundle vendored in the pushed bootstrap repository; no standalone Panel repository publication is claimed.",
+  "rollback": {
+    "predecessor_release": "private-panel-v1.1.3",
+    "predecessor_panel_commit": "f675f2a5a4093a579f27742d9a927599ed95075d",
+    "predecessor_bundle_sha256": "5ed371c83ba7ed7104f7cfda4533538b2014bbd5489e558aa353af3d80e36632",
+    "predecessor_bundle_path": "release-rollbacks/comfy-bootstrap/private-panel-v1.1.3/comfyui-mcp-panel.bundle",
+    "preserved_outside_repository": true,
+    "historical_releases_preserved": ["private-panel-v1.1.1", "private-panel-v1.1.2", "private-panel-v1.1.3"]
+  },
+  "scope": {
+    "bootstrap_publication": true,
+    "durable_bridge_deployment": "not_run",
+    "vast_template": "not_run",
+    "live_deployment": "not_run",
+    "gpu": "not_run",
+    "fresh_browser_acceptance": "not_run"
+  },
+  "secrets_in_manifest": false
+}
