@@ -136,8 +136,8 @@ class ImmutableGenerationPortTests(unittest.TestCase):
 
     def test_panel_release_pins_reject_mismatched_environment_overrides(self) -> None:
         repository = "${SCRIPT_DIR}/vendor/comfyui-mcp-panel.bundle"
-        commit = "a3e75aa6bb836d4034a20fb94eb4792ee91b1606"
-        checksum = "fa71e450599ee63b7c0de3e87c9c9fa965da00f0c6de16b3c3d8d43c46a31b9d"
+        commit = "28d50b3079bac11eccc794e74326a489f2eeaa8b"
+        checksum = "56e1e75f9e07c089991362ccd06b8ed9c3dfca59abccfbc7a042678921b16656"
         validator = "validate_mcp_panel_release_overrides() {" + self.onstart.split(
             "validate_mcp_panel_release_overrides() {", 1
         )[1].split("\n\nensure_mcp_panel_pinned() {", 1)[0]
@@ -198,24 +198,43 @@ class ImmutableGenerationPortTests(unittest.TestCase):
         self.assertNotIn('local panel_bundle_sha256="${MCP_PANEL_BUNDLE_SHA256:-', self.onstart)
 
     def test_panel_is_pinned_preserved_and_not_snapshotted(self) -> None:
-        commit = "a3e75aa6bb836d4034a20fb94eb4792ee91b1606"
+        commit = "28d50b3079bac11eccc794e74326a489f2eeaa8b"
         bundle = REPO / "vendor/comfyui-mcp-panel.bundle"
         self.assertEqual(
             hashlib.sha256(bundle.read_bytes()).hexdigest(),
-            "fa71e450599ee63b7c0de3e87c9c9fa965da00f0c6de16b3c3d8d43c46a31b9d",
+            "56e1e75f9e07c089991362ccd06b8ed9c3dfca59abccfbc7a042678921b16656",
         )
-        verified = subprocess.run(
-            ["git", "bundle", "verify", str(bundle)],
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            timeout=20,
-        )
-        self.assertEqual(verified.returncode, 0, verified.stdout)
+        with tempfile.TemporaryDirectory() as non_repo_cwd:
+            verified = subprocess.run(
+                ["git", "-C", str(REPO), "bundle", "verify", str(bundle)],
+                cwd=non_repo_cwd,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=20,
+            )
+            self.assertEqual(verified.returncode, 0, verified.stdout)
         heads = subprocess.check_output(
             ["git", "bundle", "list-heads", str(bundle)], text=True, timeout=20
         )
         self.assertIn(commit, heads)
+        with tempfile.TemporaryDirectory() as clone_root:
+            checkout = Path(clone_root) / "checkout"
+            subprocess.run(["git", "-C", clone_root, "init", "-q", "checkout"], check=True, timeout=20)
+            subprocess.run(
+                ["git", "-C", str(checkout), "fetch", str(bundle), "HEAD:refs/heads/certified"],
+                check=True,
+                timeout=20,
+            )
+            subprocess.run(
+                ["git", "-C", str(checkout), "checkout", "--detach", commit],
+                check=True,
+                timeout=20,
+            )
+            self.assertEqual(
+                subprocess.check_output(["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True).strip(),
+                commit,
+            )
         self.assertIn(commit, self.onstart)
         self.assertIn("vendor/comfyui-mcp-panel.bundle", self.onstart)
         self.assertIn("Vendored MCP Panel bundle checksum mismatch.", self.onstart)
