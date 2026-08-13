@@ -1,0 +1,30 @@
+{
+  "schema": "private-comfy-panel-distribution/v1",
+  "release": "private-panel-v1.1.2",
+  "publication_date": "2026-08-13",
+  "panel": {
+    "commit": "5b8b29a767980ef1776c56dc1c0a551e3401b37e",
+    "bundle": "vendor/comfyui-mcp-panel.bundle",
+    "bundle_sha256": "f7398428051d861f52b4e6892e6027749ea82f4a139b475c5f8f603a5f03997d",
+    "bundle_ref": "HEAD",
+    "complete_history": true
+  },
+  "bridge": {
+    "commit": "89d8436793da86fcdb4eb80555f1580616701620",
+    "distribution": "External durable loopback service; source is not bundled in bootstrap."
+  },
+  "distribution": "Immutable Panel Git bundle vendored in the pushed bootstrap repository; no standalone Panel repository publication is claimed.",
+  "rollback": {
+    "predecessor_panel_commit": "c33cce24d672fc22f7efb10f8d58d352d7753911",
+    "predecessor_bundle_sha256": "cca874a7bb9b08450cdcfedbc5a63480ab9da0c6a01e3bf322b9e8350cd06115",
+    "preserved_outside_repository": true
+  },
+  "scope": {
+    "bootstrap_publication": true,
+    "durable_bridge_deployment": true,
+    "vast_template": "not_run",
+    "gpu": "not_run",
+    "fresh_browser_acceptance": "not_run"
+  },
+  "secrets_in_manifest": false
+}
