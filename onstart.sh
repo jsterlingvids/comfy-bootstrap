@@ -626,8 +626,13 @@ restore_transactional_generation() {
   if ! "${RUNTIME_PYTHON}" "${SCRIPT_DIR}/snapshot_activate.py" \
       "${stage_root}" "${stage_root}/snapshot.manifest.json" "${COMFY_ROOT}"; then
     rm -rf "${stage_root}"
-    log "Generation activation failed and was rolled back."
-    return 1
+    log "Generation activation failed and was rolled back; degrading to immutable baseline (boot continues)."
+    SNAPSHOT_MODE="none"
+    ACTIVE_STATE_ROOT="${COMFY_STATE_ROOT}/unavailable"
+    REMOTE_CUSTOM_NODES="${ACTIVE_STATE_ROOT}/custom_nodes"
+    REMOTE_WORKFLOWS="${ACTIVE_STATE_ROOT}/workflows"
+    REMOTE_SETTINGS="${ACTIVE_STATE_ROOT}/settings"
+    return 0
   fi
   if [[ -f "${stage_root}/custom_nodes_manifest.txt" ]]; then
     install -m 0644 "${stage_root}/custom_nodes_manifest.txt" "${MANIFEST_REMOTE_CACHE}"
@@ -1817,7 +1822,7 @@ main() {
   ensure_directories
   case "${SNAPSHOT_MODE}" in
     generation)
-      restore_transactional_generation
+      restore_transactional_generation || SNAPSHOT_MODE="none"
       ;;
     legacy)
       restore_workflows
@@ -1837,7 +1842,7 @@ main() {
   ensure_comfyui_manager_v4
   restart_comfy_if_idle
   start_private_tailscale_comfy
-  advertise_hermes_bridge
+  advertise_hermes_bridge || log "Hermes bridge not self-advertised; external orchestrator may advertise it later (boot continues)."
 
   install_node_requirements
   run_custom_node_install_scripts
@@ -1847,7 +1852,7 @@ main() {
     return 1
   }
   if restart_comfy_if_idle; then
-    advertise_hermes_bridge
+    advertise_hermes_bridge || log "Hermes bridge not self-advertised post-reload; external orchestrator may advertise it later."
   else
     log "Full custom-node reload was deferred; refusing readiness until the live registry can be validated."
     return 1
