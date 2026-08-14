@@ -1119,6 +1119,62 @@ run_custom_node_install_scripts() {
   fi
 }
 
+# Install pinned authoritative runtime dependencies that the originating repos do
+# not pin correctly. This runs AFTER install_node_requirements /
+# run_custom_node_install_scripts so it can override unpinned pulls (e.g. LTXVideo
+# lists bare "kornia", which resolves to 0.8.x and breaks its `pad` import).
+# Runs whenever the pin file fingerprint changes; never downgrades/removes the
+# approved Torch/torchvision/SageAttention runtime.
+install_pinned_node_runtime() {
+  local stamp_file="${STATE_DIR}/custom-node-runtime-pins.sha256"
+  local current_fingerprint="" current_stamp=""
+  local torch_runtime_before="" torch_constraints="" pin_file=""
+  local deps=(
+    "kornia==0.7.4"
+    "opencv-python-headless"
+    "accelerate"
+    "imageio-ffmpeg"
+    "onnxruntime"
+    "onnx"
+    "matplotlib"
+  )
+
+  command -v "${RUNTIME_PYTHON}" >/dev/null 2>&1 || { log "python3 missing; cannot install pinned node runtime."; exit 1; }
+  if ! verify_approved_torch_runtime; then
+    log "Approved Torch runtime preflight failed before pinned node runtime install."
+    return 1
+  fi
+
+  pin_file="$(mktemp)"
+  printf '%s\n' "${deps[@]}" > "${pin_file}"
+  current_fingerprint="$(sha256sum "${pin_file}" | awk '{print $1}')"
+  current_stamp="$(read_stamp "${stamp_file}")"
+  if [[ "${current_fingerprint}" == "${current_stamp}" ]]; then
+    log "Pinned node runtime unchanged; skipping reinstall."
+    rm -f "${pin_file}"
+    return 0
+  fi
+
+  torch_runtime_before="$(capture_torch_runtime_identity)" || { log "WARNING: cannot capture Torch runtime before pinned node deps."; rm -f "${pin_file}"; return 1; }
+  torch_constraints="$(mktemp)"
+  write_torch_runtime_constraints "${torch_constraints}"
+
+  if pip_install_with_fallback install --no-cache-dir -c "${torch_constraints}" -r "${pin_file}" &&
+     verify_torch_runtime_unchanged "${torch_runtime_before}"; then
+    write_stamp "${stamp_file}" "${current_fingerprint}"
+    log "Installed pinned node runtime dependencies (kornia==0.7.4, opencv, accelerate, imageio-ffmpeg, onnxruntime, onnx, matplotlib)."
+  else
+    rm -f "${stamp_file}"
+    log "WARNING: pinned node runtime install failed or drifted Torch identity; stamp invalidated for retry."
+  fi
+  rm -f "${pin_file}" "${torch_constraints}"
+
+  if ! verify_approved_torch_runtime; then
+    log "Approved runtime identity drifted during pinned node runtime install; refusing readiness."
+    return 1
+  fi
+}
+
 install_comfy_requirements() {
   local comfy_requirements="${COMFY_ROOT}/requirements.txt"
   local current_fingerprint=""
@@ -1785,6 +1841,7 @@ main() {
 
   install_node_requirements
   run_custom_node_install_scripts
+  install_pinned_node_runtime
   verify_approved_torch_runtime || {
     log "Final approved Torch/torchvision/CUDA/SageAttention gate failed after all custom-node dependency hooks."
     return 1
