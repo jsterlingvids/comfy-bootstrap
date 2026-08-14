@@ -733,10 +733,10 @@ restore_custom_nodes_snapshot() {
     return
   fi
 
-  restored_file_count="$(find "${stage_root}/custom_nodes" -type f | wc -l)"
+  restored_file_count="$(find "${stage_root}/custom_nodes" -type f ! -name .gitkeep | wc -l)"
   if (( restored_file_count == 0 )); then
     rm -rf "${stage_root}"
-    log "Custom-node snapshot was empty; falling back to manifest clones."
+    log "Custom-node snapshot was empty (or only held placeholder markers); falling back to manifest clones."
     return
   fi
 
