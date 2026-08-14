@@ -637,8 +637,19 @@ restore_transactional_generation() {
   if [[ -f "${stage_root}/custom_nodes_manifest.txt" ]]; then
     install -m 0644 "${stage_root}/custom_nodes_manifest.txt" "${MANIFEST_REMOTE_CACHE}"
   fi
+  # Only treat custom nodes as restored if the generation actually shipped a
+  # populated custom_nodes surface (or a manifest). Josh's policy is "minimal,
+  # stable node set; no broad custom-node restoration" — an empty custom_nodes
+  # surface must fall through to manifest-driven cloning in sync_custom_nodes.
+  if [[ -s "${stage_root}/custom_nodes_manifest.txt" ]] ||
+     [[ -n "$(find "${stage_root}/custom_nodes" -mindepth 1 -maxdepth 1 ! -name .gitkeep 2>/dev/null | head -1)" ]]; then
+    CUSTOM_NODES_SNAPSHOT_RESTORED=1
+    log "Custom nodes present in verified generation; skipping manifest re-clone."
+  else
+    CUSTOM_NODES_SNAPSHOT_RESTORED=0
+    log "Verified generation carried no custom nodes; falling through to manifest-based cloning."
+  fi
   rm -rf "${stage_root}"
-  CUSTOM_NODES_SNAPSHOT_RESTORED=1
   log "Verified generation activated transactionally."
 }
 
